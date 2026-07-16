@@ -5,6 +5,11 @@ unsafe extern "C" {
     fn sci_host_note_i32(value: i32);
 }
 
+struct ScalarPair {
+    left: i32,
+    right: i32,
+}
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn sci_add_i32(a: i32, b: i32) -> i32 {
@@ -25,6 +30,12 @@ pub extern "C" fn sci_max_i32(a: i32, b: i32) -> i32 {
 pub extern "C" fn sci_tuple_sum_i32(a: i32, b: i32) -> i32 {
     let pair = (a, b);
     pair.0 + pair.1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_struct_sum_i32(a: i32, b: i32) -> i32 {
+    let pair = ScalarPair { left: a, right: b };
+    pair.left + pair.right
 }
 
 #[unsafe(no_mangle)]

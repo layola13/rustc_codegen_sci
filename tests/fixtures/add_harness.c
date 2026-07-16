@@ -4,6 +4,7 @@ extern int32_t sci_add_i32(int32_t a, int32_t b);
 extern int32_t sci_gt_i32(int32_t a, int32_t b);
 extern int32_t sci_max_i32(int32_t a, int32_t b);
 extern int32_t sci_tuple_sum_i32(int32_t a, int32_t b);
+extern int32_t sci_struct_sum_i32(int32_t a, int32_t b);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern void sci_unit_noop(int32_t a);
@@ -53,6 +54,9 @@ int main(void) {
     }
     if (sci_tuple_sum_i32(19, 23) != 42) {
         return 32;
+    }
+    if (sci_struct_sum_i32(17, 25) != 42) {
+        return 33;
     }
     if (sci_call_add_i32(11, 31) != 42) {
         return 6;

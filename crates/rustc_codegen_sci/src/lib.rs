@@ -261,16 +261,16 @@ fn lower_function<'tcx>(
                     tcx.symbol_name(instance).name
                 ));
             }
-        } else if let Some(field_types) = scalar_tuple_types(ty) {
+        } else if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
             if local == rustc_middle::mir::RETURN_PLACE {
                 return Err(format!(
-                    "{}: tuple return ABI is not yet supported",
+                    "{}: aggregate return ABI is not yet supported",
                     tcx.symbol_name(instance).name
                 ));
             }
             if local.index() != 0 && local.index() <= mir.arg_count {
                 return Err(format!(
-                    "{}: tuple argument ABI is not yet supported",
+                    "{}: aggregate argument ABI is not yet supported",
                     tcx.symbol_name(instance).name
                 ));
             }
@@ -677,15 +677,15 @@ fn lower_assignment<'tcx>(
         );
     }
 
-    if scalar_tuple_types(place_ty).is_some() {
-        return lower_tuple_assignment(tcx, instance, mir, state, place, rvalue);
+    if scalar_aggregate_field_types(tcx, place_ty).is_some() {
+        return lower_aggregate_assignment(tcx, instance, mir, state, place, rvalue);
     }
 
     let dst = lower_destination(state, place)?;
     Ok(vec![lower_rvalue(tcx, instance, mir, state, dst, rvalue)?])
 }
 
-fn lower_tuple_assignment<'tcx>(
+fn lower_aggregate_assignment<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
     mir: &Body<'tcx>,
@@ -695,26 +695,30 @@ fn lower_tuple_assignment<'tcx>(
 ) -> Result<Vec<Operation>, String> {
     if !place.projection.is_empty() {
         return Err(format!(
-            "{}: tuple aggregate destination must be an unprojected local",
+            "{}: aggregate destination must be an unprojected local",
             tcx.symbol_name(instance).name
         ));
     }
     let Rvalue::Aggregate(kind, operands) = rvalue else {
         return Err(format!(
-            "{}: tuple assignment only supports aggregate rvalues, got `{rvalue:?}`",
+            "{}: aggregate assignment only supports aggregate rvalues, got `{rvalue:?}`",
             tcx.symbol_name(instance).name
         ));
     };
-    if !matches!(**kind, AggregateKind::Tuple) {
-        return Err(format!(
-            "{}: only tuple aggregate rvalues are currently supported",
-            tcx.symbol_name(instance).name
-        ));
+    match **kind {
+        AggregateKind::Tuple => {}
+        AggregateKind::Adt(def_id, ..) if tcx.adt_def(def_id).is_struct() => {}
+        _ => {
+            return Err(format!(
+                "{}: only tuple and struct aggregate rvalues are currently supported",
+                tcx.symbol_name(instance).name
+            ));
+        }
     }
     let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
-    let field_types = scalar_tuple_types(place_ty).ok_or_else(|| {
+    let field_types = scalar_aggregate_field_types(tcx, place_ty).ok_or_else(|| {
         format!(
-            "{}: tuple aggregate destination has unsupported type `{}`",
+            "{}: aggregate destination has unsupported type `{}`",
             tcx.symbol_name(instance).name,
             place_ty
         )
@@ -733,7 +737,7 @@ fn lower_tuple_assignment<'tcx>(
         .map(|(field, operand)| {
             let dst = state.tuple_field(place.local, field).ok_or_else(|| {
                 format!(
-                    "{}: tuple field {field} is missing a synthetic local",
+                    "{}: aggregate field {field} is missing a synthetic local",
                     tcx.symbol_name(instance).name
                 )
             })?;
@@ -1705,14 +1709,26 @@ fn is_unit_ty(ty: Ty<'_>) -> bool {
     matches!(ty.kind(), ty::Tuple(fields) if fields.is_empty())
 }
 
-fn scalar_tuple_types(ty: Ty<'_>) -> Option<Vec<ScalarType>> {
-    let ty::Tuple(fields) = ty.kind() else {
-        return None;
-    };
-    if fields.is_empty() {
-        return None;
+fn scalar_aggregate_field_types<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Vec<ScalarType>> {
+    match ty.kind() {
+        ty::Tuple(fields) => {
+            if fields.is_empty() {
+                return None;
+            }
+            fields.iter().map(scalar_type_for_ty).collect()
+        }
+        ty::Adt(adt_def, args) if adt_def.is_struct() => {
+            let fields = &adt_def.non_enum_variant().fields;
+            if fields.is_empty() {
+                return None;
+            }
+            fields
+                .iter()
+                .map(|field| scalar_type_for_ty(field.ty(tcx, args).skip_norm_wip()))
+                .collect()
+        }
+        _ => None,
     }
-    fields.iter().map(scalar_type_for_ty).collect()
 }
 
 fn scalar_bit_width(ty: Ty<'_>) -> Option<u32> {

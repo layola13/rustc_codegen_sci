@@ -19,8 +19,8 @@ Baseline date: 2026-07-16.
   unit/void returns and calls, if/else CFG, MIR assert abort paths,
   signed/unsigned scalar integer `SwitchInt`/`match`, division/remainder,
   shifts, unary integer negation/bit-not, checked add/sub/mul overflow tuple
-  lowering through 64-bit integers, local scalar tuple construction and field
-  projection, SCI object emission, native link, and execution.
+  lowering through 64-bit integers, local scalar tuple/struct construction and
+  field projection, SCI object emission, native link, and execution.
 
 ## Bring-up Capability
 
@@ -32,7 +32,7 @@ Baseline date: 2026-07-16.
 | Function ABI | scalar integer and void C/Rust ABI with direct pass modes, including `isize`/`usize` on 64-bit targets |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar/void function calls and direct scalar/void `extern "C"` calls with unreachable unwind |
-| MIR rvalues | `Use`, scalar tuple `Aggregate`, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
+| MIR rvalues | `Use`, scalar tuple/struct `Aggregate`, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
 | Values | integer/bool locals and integer/bool constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |
 | Proof mode | `rust-trusted` |
