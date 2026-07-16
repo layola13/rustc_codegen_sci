@@ -25,10 +25,11 @@ before MIR `Assert`; checked mul is supported for integer widths up to 64
 bits. Local scalar tuples and structs can be constructed and read through
 field projection, and local scalar aggregate copy/move is lowered field by
 field. Function-internal empty struct ZST locals are ignored as no-op values;
-pointer load/store/deref is not supported yet. Aggregate and ZST struct
-argument/return ABI is still rejected. Unsupported targets, ABIs, MIR
-operations, and features are hard errors. There is no LLVM-backend or `bc2sa`
-fallback.
+raw pointer null constants, equality/inequality, and thin pointer-to-pointer
+copies are supported. Pointer load/store/deref is not supported yet. Aggregate
+and ZST struct argument/return ABI is still rejected. Unsupported targets,
+ABIs, MIR operations, and features are hard errors. There is no LLVM-backend or
+`bc2sa` fallback.
 
 Build and run the focused smoke gate:
 
@@ -39,3 +40,6 @@ Build and run the focused smoke gate:
 See `docs/status.md` for the exact implemented capability matrix and
 `docs/architecture.md` for component boundaries. The staged implementation
 roadmap is in `docs/implementation_plan_cn.md`.
+
+Live execution tracking is maintained in `tasks.md`, `progress.md`, and
+`current_plan.md`.

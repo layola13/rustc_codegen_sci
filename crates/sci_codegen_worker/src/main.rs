@@ -366,7 +366,7 @@ fn validate_operation(
             }
             defined.insert(*dst);
         }
-        Operation::Compare { dst, lhs, rhs, .. } => {
+        Operation::Compare { dst, op, lhs, rhs } => {
             validate_value(locals, defined, lhs)?;
             validate_value(locals, defined, rhs)?;
             validate_destination(locals, *dst)?;
@@ -378,9 +378,14 @@ fn validate_operation(
             }
             let lhs_ty = value_type(locals, lhs)?;
             let rhs_ty = value_type(locals, rhs)?;
-            if lhs_ty == ScalarType::Ptr || rhs_ty == ScalarType::Ptr {
+            if (lhs_ty == ScalarType::Ptr || rhs_ty == ScalarType::Ptr)
+                && !matches!(
+                    op,
+                    sci_protocol::CompareOp::Eq | sci_protocol::CompareOp::Ne
+                )
+            {
                 return Err(format!(
-                    "{} compare operation on ptr is not supported",
+                    "{} ordered compare operation on ptr is not supported",
                     function.symbol
                 ));
             }
@@ -757,13 +762,25 @@ fn emit_operation(out: &mut String, locals: &BTreeMap<u32, ScalarType>, operatio
         Operation::Copy { dst, src } => {
             out.push_str("    ");
             out.push_str(&local_name(*dst));
-            if locals[dst] == ScalarType::Ptr {
+            if matches!(
+                src,
+                ValueRef::Integer {
+                    ty: ScalarType::Ptr,
+                    ..
+                }
+            ) {
+                out.push_str(" = ");
+                emit_value(out, src);
+                out.push_str(" as ptr\n");
+            } else if locals[dst] == ScalarType::Ptr {
                 out.push_str(" = ptr_add ");
+                emit_value(out, src);
+                out.push_str(", 0\n");
             } else {
                 out.push_str(" = add ");
+                emit_value(out, src);
+                out.push_str(", 0\n");
             }
-            emit_value(out, src);
-            out.push_str(", 0\n");
         }
         Operation::Binary { dst, op, lhs, rhs } => {
             out.push_str("    ");
@@ -922,10 +939,7 @@ fn emit_value(out: &mut String, value: &ValueRef) {
             ScalarType::U16 => out.push_str(&(*bits as u16).to_string()),
             ScalarType::U32 => out.push_str(&(*bits as u32).to_string()),
             ScalarType::U64 => out.push_str(&bits.to_string()),
-            ScalarType::Ptr => {
-                out.push_str(&bits.to_string());
-                out.push_str(" as ptr");
-            }
+            ScalarType::Ptr => out.push_str(&bits.to_string()),
         },
     }
 }

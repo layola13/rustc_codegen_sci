@@ -78,6 +78,21 @@ pub extern "C" fn sci_call_host_identity_ptr(value: *const i32) -> *const i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_ptr_eq(lhs: *const i32, rhs: *const i32) -> i32 {
+    (lhs == rhs) as i32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_ptr_is_null(value: *const i32) -> i32 {
+    (value == core::ptr::null()) as i32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_null_ptr() -> *const i32 {
+    core::ptr::null()
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_call_add_i32(a: i32, b: i32) -> i32 {
     sci_add_i32(a, b)
 }

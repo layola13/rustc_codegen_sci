@@ -22,7 +22,8 @@ Baseline date: 2026-07-16.
   shifts, unary integer negation/bit-not, checked add/sub/mul overflow tuple
   lowering through 64-bit integers, local scalar tuple/struct construction and
   field projection, local scalar aggregate copy/move, function-internal empty
-  struct ZST locals, SCI object emission, native link, and execution.
+  struct ZST locals, raw pointer null/equality/inequality and thin `PtrToPtr`
+  copies, SCI object emission, native link, and execution.
 
 ## Bring-up Capability
 
@@ -34,8 +35,8 @@ Baseline date: 2026-07-16.
 | Function ABI | scalar integer, raw pointer, and void C/Rust ABI with direct pass modes, including `isize`/`usize` on 64-bit targets; pointer deref/load/store is not supported yet |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls with unreachable unwind |
-| MIR rvalues | `Use`, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
-| Values | integer/bool/raw-pointer locals and integer/bool constants, including `isize`/`usize` lowered through the active target pointer width |
+| MIR rvalues | `Use`, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |
+| Values | integer/bool/raw-pointer locals, integer/bool constants, and null pointer constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |
 | Proof mode | `rust-trusted` |
 
@@ -43,7 +44,8 @@ Every missing capability is rejected before object publication.
 
 ## Next Required Work
 
-The full staged roadmap is tracked in `docs/implementation_plan_cn.md`.
+The full staged roadmap is tracked in `docs/implementation_plan_cn.md`; live
+execution state is tracked in `tasks.md`, `progress.md`, and `current_plan.md`.
 
 1. Indirect/ABI-rich calls, tuple argument/return ABI, and wider scalar
    operation coverage.

@@ -11,6 +11,9 @@ extern int32_t sci_empty_struct_local_i32(int32_t a, int32_t b);
 extern const int32_t *sci_identity_ptr(const int32_t *value);
 extern const int32_t *sci_call_identity_ptr(const int32_t *value);
 extern const int32_t *sci_call_host_identity_ptr(const int32_t *value);
+extern int32_t sci_ptr_eq(const int32_t *lhs, const int32_t *rhs);
+extern int32_t sci_ptr_is_null(const int32_t *value);
+extern const int32_t *sci_null_ptr(void);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern void sci_unit_noop(int32_t a);
@@ -87,6 +90,21 @@ int main(void) {
     }
     if (sci_call_host_identity_ptr(&ptr_probe) != &ptr_probe) {
         return 39;
+    }
+    if (sci_ptr_eq(&ptr_probe, &ptr_probe) != 1) {
+        return 40;
+    }
+    if (sci_ptr_eq(&ptr_probe, (const int32_t *)0) != 0) {
+        return 41;
+    }
+    if (sci_ptr_is_null((const int32_t *)0) != 1) {
+        return 42;
+    }
+    if (sci_ptr_is_null(&ptr_probe) != 0) {
+        return 43;
+    }
+    if (sci_null_ptr() != (const int32_t *)0) {
+        return 44;
     }
     if (sci_call_add_i32(11, 31) != 42) {
         return 6;

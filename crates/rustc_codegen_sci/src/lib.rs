@@ -892,14 +892,23 @@ fn lower_rvalue<'tcx>(
             lower_unary_op(tcx, instance, mir, state, dst, *op, operand)
         }
         Rvalue::Cast(kind, operand, ty) => {
+            let src_ty = monomorphize_ty(tcx, instance, operand.ty(&mir.local_decls, tcx));
+            let dst_ty = monomorphize_ty(tcx, instance, *ty);
+            if *kind == rustc_middle::mir::CastKind::PtrToPtr
+                && scalar_type_for_ty(src_ty) == Some(ScalarType::Ptr)
+                && scalar_type_for_ty(dst_ty) == Some(ScalarType::Ptr)
+            {
+                return Ok(Operation::Copy {
+                    dst,
+                    src: lower_operand(tcx, instance, mir, state, operand)?,
+                });
+            }
             if *kind != rustc_middle::mir::CastKind::IntToInt {
                 return Err(format!(
                     "{}: unsupported cast kind `{kind:?}`",
                     tcx.symbol_name(instance).name
                 ));
             }
-            let src_ty = monomorphize_ty(tcx, instance, operand.ty(&mir.local_decls, tcx));
-            let dst_ty = monomorphize_ty(tcx, instance, *ty);
             let dst_scalar = scalar_type_for_ty(dst_ty).ok_or_else(|| {
                 format!(
                     "{}: cast destination has unsupported type `{}`",
