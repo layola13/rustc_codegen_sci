@@ -15,7 +15,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use rustc_abi::{Endian as RustcEndian, ExternAbi};
+use rustc_abi::{CanonAbi, Endian as RustcEndian, ExternAbi, Reg, RegKind};
 use rustc_codegen_ssa::back::write::produce_final_output_artifacts;
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind, TargetConfig};
@@ -29,11 +29,14 @@ use rustc_middle::ty::{self, Instance, Ty, TyCtxt};
 use rustc_session::Session;
 use rustc_session::config::{CrateType, OutFileName, OutputFilenames, OutputType};
 use rustc_span::Symbol;
+use rustc_target::callconv::{FnAbi, PassMode};
 use rustc_target::spec::PanicStrategy;
 use sci_protocol::{
-    BasicBlockPlan, BinaryOp, CastOp, CompareOp, CompileRequest, CompileResponse, Endian,
-    ExternFunctionPlan, FunctionPlan, LocalPlan, Operation, PLAN_VERSION, ScalarType,
-    SciModulePlan, SwitchCasePlan, TargetPlan, TerminatorPlan, ValueRef, read_frame, write_frame,
+    AbiPassModePlan, AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan,
+    BasicBlockPlan, BinaryOp, CallingConventionPlan, CastOp, CompareOp, CompileRequest,
+    CompileResponse, Endian, ExternFunctionPlan, FnAbiPlan, FunctionPlan, LocalPlan, Operation,
+    PLAN_VERSION, ScalarType, SciModulePlan, SwitchCasePlan, TargetPlan, TerminatorPlan, ValueRef,
+    read_frame, write_frame,
 };
 
 const BACKEND_NAME: &str = "sci";
@@ -356,6 +359,7 @@ fn lower_function<'tcx>(
 
     Ok(FunctionPlan {
         symbol: tcx.symbol_name(instance).name.to_string(),
+        abi: lower_fn_abi_plan(tcx, instance)?,
         argument_locals,
         return_local,
         locals,
@@ -651,9 +655,103 @@ fn lower_extern_function<'tcx>(
 
     Ok(ExternFunctionPlan {
         symbol: tcx.symbol_name(callee).name.to_string(),
+        abi: lower_fn_abi_plan(tcx, callee)?,
         argument_types,
         return_type,
     })
+}
+
+fn lower_fn_abi_plan<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+) -> Result<FnAbiPlan, String> {
+    let fn_abi = tcx
+        .fn_abi_of_instance(
+            ty::TypingEnv::fully_monomorphized().as_query_input((instance, ty::List::empty())),
+        )
+        .map_err(|err| {
+            format!(
+                "{}: failed to compute rustc FnAbi: {err:?}",
+                tcx.symbol_name(instance).name
+            )
+        })?;
+    Ok(lower_rustc_fn_abi(fn_abi))
+}
+
+fn lower_rustc_fn_abi<'tcx>(fn_abi: &FnAbi<'tcx, Ty<'tcx>>) -> FnAbiPlan {
+    FnAbiPlan {
+        convention: lower_calling_convention(fn_abi.conv),
+        variadic: fn_abi.c_variadic,
+        fixed_count: fn_abi.fixed_count,
+        can_unwind: fn_abi.can_unwind,
+        arguments: fn_abi.args.iter().map(lower_abi_value).collect(),
+        return_value: lower_abi_value(&fn_abi.ret),
+    }
+}
+
+fn lower_calling_convention(conv: CanonAbi) -> CallingConventionPlan {
+    match conv {
+        CanonAbi::C => CallingConventionPlan::C,
+        CanonAbi::Rust => CallingConventionPlan::Rust,
+        CanonAbi::RustCold => CallingConventionPlan::RustCold,
+        CanonAbi::RustPreserveNone => CallingConventionPlan::RustPreserveNone,
+        CanonAbi::RustTail => CallingConventionPlan::RustTail,
+        other => CallingConventionPlan::Other(format!("{other:?}")),
+    }
+}
+
+fn lower_abi_value<'tcx>(value: &rustc_target::callconv::ArgAbi<'tcx, Ty<'tcx>>) -> AbiValuePlan {
+    AbiValuePlan {
+        size: value.layout.size.bytes(),
+        align: value.layout.align.abi.bytes(),
+        mode: lower_pass_mode(&value.mode),
+    }
+}
+
+fn lower_pass_mode(mode: &PassMode) -> AbiPassModePlan {
+    match mode {
+        PassMode::Ignore => AbiPassModePlan::Ignore,
+        PassMode::Direct(_) => AbiPassModePlan::Direct,
+        PassMode::Pair(_, _) => AbiPassModePlan::Pair,
+        PassMode::Cast { pad_i32, cast } => AbiPassModePlan::Cast {
+            pad_i32: *pad_i32,
+            prefix: cast
+                .prefix
+                .iter()
+                .copied()
+                .map(lower_abi_register)
+                .collect(),
+            rest_offset: cast.rest_offset.map(|offset| offset.bytes()),
+            rest: lower_abi_uniform(cast.rest),
+        },
+        PassMode::Indirect {
+            meta_attrs,
+            on_stack,
+            ..
+        } => AbiPassModePlan::Indirect {
+            has_metadata: meta_attrs.is_some(),
+            on_stack: *on_stack,
+        },
+    }
+}
+
+fn lower_abi_uniform(uniform: rustc_target::callconv::Uniform) -> AbiUniformPlan {
+    AbiUniformPlan {
+        unit: lower_abi_register(uniform.unit),
+        total_bytes: uniform.total.bytes(),
+        consecutive: uniform.is_consecutive,
+    }
+}
+
+fn lower_abi_register(reg: Reg) -> AbiRegisterPlan {
+    AbiRegisterPlan {
+        kind: match reg.kind {
+            RegKind::Integer => AbiRegisterKind::Integer,
+            RegKind::Float => AbiRegisterKind::Float,
+            RegKind::Vector { .. } => AbiRegisterKind::Vector,
+        },
+        bits: reg.size.bits(),
+    }
 }
 
 fn lower_assignment<'tcx>(

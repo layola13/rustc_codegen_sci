@@ -14,16 +14,14 @@ No LLVM backend fallback and no `bc2sa` fallback.
 
 ## Current Window
 
-1. Finish direct scalar/raw-pointer ABI fixtures, including null and pointer
-   equality behavior. Keep dereference and provenance-changing casts gated.
-2. Introduce explicit ABI plan data instead of inferring ABI from scalar local
-   lists: Ignore, Direct, Pair, Cast, and Indirect.
-3. Implement the first Pair/Indirect C ABI fixtures and aggregate return/arg
+1. Build 20-30 ABI fixtures over the serialized rustc `FnAbiPlan`, starting
+   with Pair/Cast/Indirect detection and compile-fail coverage.
+2. Implement the first Pair/Indirect C ABI fixtures and aggregate return/arg
    lowering against rustc `FnAbi` evidence.
-4. Add target-qualified stack/load/store plans with size and alignment, then
+3. Add target-qualified stack/load/store plans with size and alignment, then
    connect local aggregates to memory representation.
-5. Add allocation images and relocations for statics, strings, and panic data.
-6. Add direct SAB no-fallback emission from the same canonical plan.
+4. Add allocation images and relocations for statics, strings, and panic data.
+5. Add direct SAB no-fallback emission from the same canonical plan.
 
 ## Exit Gates
 

@@ -8,6 +8,9 @@ Baseline date: 2026-07-16.
 - Rustc-private backend dylib entry point.
 - Early target, panic, LTO, coverage, crate type, and float capability gates.
 - Canonical SCI lowering-plan data model.
+- rustc-derived `FnAbiPlan` metadata serialized for defined and extern
+  functions, including layout, calling convention, variadic/unwind flags, and
+  Ignore/Direct/Pair/Cast/Indirect pass mode tags.
 - Versioned framed worker RPC with bounded frame sizes.
 - Worker-side target and plan validation.
 - SA text emitter from the canonical plan.
@@ -32,7 +35,7 @@ Baseline date: 2026-07-16.
 | Target | `x86_64-unknown-linux-gnu` |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
-| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with direct pass modes, including `isize`/`usize` on 64-bit targets; pointer deref/load/store is not supported yet |
+| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted, Pair/Cast/Indirect are serialized but rejected until implemented; pointer deref/load/store is not supported yet |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls with unreachable unwind |
 | MIR rvalues | `Use`, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |
@@ -49,8 +52,8 @@ execution state is tracked in `tasks.md`, `progress.md`, and `current_plan.md`.
 
 1. Indirect/ABI-rich calls, tuple argument/return ABI, and wider scalar
    operation coverage.
-2. Complete `TyAndLayout` and `FnAbi` serialization, aggregates, allocations,
-   relocations, statics, and drop glue.
+2. Complete `TyAndLayout` recipes, Pair/Cast/Indirect ABI lowering,
+   aggregates, allocations, relocations, statics, and drop glue.
 3. SAB v5 in SCI and direct SAB emission.
 4. Direct relocatable Wasm emitters for `wasm32-unknown-unknown` and
    `wasm32-wasip1`.

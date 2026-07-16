@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 1;
-pub const PLAN_VERSION: u16 = 6;
+pub const PLAN_VERSION: u16 = 7;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,8 +174,74 @@ pub struct LocalPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CallingConventionPlan {
+    C,
+    Rust,
+    RustCold,
+    RustPreserveNone,
+    RustTail,
+    Other(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AbiRegisterKind {
+    Integer = 1,
+    Float = 2,
+    Vector = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AbiRegisterPlan {
+    pub kind: AbiRegisterKind,
+    pub bits: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AbiUniformPlan {
+    pub unit: AbiRegisterPlan,
+    pub total_bytes: u64,
+    pub consecutive: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AbiPassModePlan {
+    Ignore,
+    Direct,
+    Pair,
+    Cast {
+        pad_i32: bool,
+        prefix: Vec<AbiRegisterPlan>,
+        rest_offset: Option<u64>,
+        rest: AbiUniformPlan,
+    },
+    Indirect {
+        has_metadata: bool,
+        on_stack: bool,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AbiValuePlan {
+    pub size: u64,
+    pub align: u64,
+    pub mode: AbiPassModePlan,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FnAbiPlan {
+    pub convention: CallingConventionPlan,
+    pub variadic: bool,
+    pub fixed_count: u32,
+    pub can_unwind: bool,
+    pub arguments: Vec<AbiValuePlan>,
+    pub return_value: AbiValuePlan,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionPlan {
     pub symbol: String,
+    pub abi: FnAbiPlan,
     pub argument_locals: Vec<u32>,
     pub return_local: Option<u32>,
     pub locals: Vec<LocalPlan>,
@@ -185,6 +251,7 @@ pub struct FunctionPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExternFunctionPlan {
     pub symbol: String,
+    pub abi: FnAbiPlan,
     pub argument_types: Vec<ScalarType>,
     pub return_type: Option<ScalarType>,
 }
@@ -441,6 +508,27 @@ impl WireDecode for u32 {
     }
 }
 
+impl WireEncode for u64 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.u64(*self);
+        Ok(())
+    }
+}
+
+impl WireDecode for u64 {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        decoder.u64()
+    }
+}
+
+fn decode_bool(decoder: &mut Decoder<'_>, field: &'static str) -> Result<bool, ProtocolError> {
+    match decoder.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        tag => Err(ProtocolError::InvalidTag(field, tag)),
+    }
+}
+
 impl<T: WireEncode> WireEncode for Option<T> {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         match self {
@@ -645,9 +733,177 @@ impl WireDecode for LocalPlan {
     }
 }
 
+impl WireEncode for CallingConventionPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        match self {
+            Self::C => encoder.u8(1),
+            Self::Rust => encoder.u8(2),
+            Self::RustCold => encoder.u8(3),
+            Self::RustPreserveNone => encoder.u8(4),
+            Self::RustTail => encoder.u8(5),
+            Self::Other(name) => {
+                encoder.u8(6);
+                encoder.string(name)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl WireDecode for CallingConventionPlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        match decoder.u8()? {
+            1 => Ok(Self::C),
+            2 => Ok(Self::Rust),
+            3 => Ok(Self::RustCold),
+            4 => Ok(Self::RustPreserveNone),
+            5 => Ok(Self::RustTail),
+            6 => Ok(Self::Other(decoder.string()?)),
+            tag => Err(ProtocolError::InvalidTag("calling convention", tag)),
+        }
+    }
+}
+
+impl WireEncode for AbiRegisterPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.u8(self.kind as u8);
+        encoder.u64(self.bits);
+        Ok(())
+    }
+}
+
+impl WireDecode for AbiRegisterPlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        let kind = match decoder.u8()? {
+            1 => AbiRegisterKind::Integer,
+            2 => AbiRegisterKind::Float,
+            3 => AbiRegisterKind::Vector,
+            tag => return Err(ProtocolError::InvalidTag("ABI register kind", tag)),
+        };
+        Ok(Self {
+            kind,
+            bits: decoder.u64()?,
+        })
+    }
+}
+
+impl WireEncode for AbiUniformPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        self.unit.encode(encoder)?;
+        encoder.u64(self.total_bytes);
+        encoder.u8(u8::from(self.consecutive));
+        Ok(())
+    }
+}
+
+impl WireDecode for AbiUniformPlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            unit: AbiRegisterPlan::decode(decoder)?,
+            total_bytes: decoder.u64()?,
+            consecutive: decode_bool(decoder, "ABI uniform consecutive")?,
+        })
+    }
+}
+
+impl WireEncode for AbiPassModePlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        match self {
+            Self::Ignore => encoder.u8(1),
+            Self::Direct => encoder.u8(2),
+            Self::Pair => encoder.u8(3),
+            Self::Cast {
+                pad_i32,
+                prefix,
+                rest_offset,
+                rest,
+            } => {
+                encoder.u8(4);
+                encoder.u8(u8::from(*pad_i32));
+                encoder.vec(prefix)?;
+                rest_offset.encode(encoder)?;
+                rest.encode(encoder)?;
+            }
+            Self::Indirect {
+                has_metadata,
+                on_stack,
+            } => {
+                encoder.u8(5);
+                encoder.u8(u8::from(*has_metadata));
+                encoder.u8(u8::from(*on_stack));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl WireDecode for AbiPassModePlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        match decoder.u8()? {
+            1 => Ok(Self::Ignore),
+            2 => Ok(Self::Direct),
+            3 => Ok(Self::Pair),
+            4 => Ok(Self::Cast {
+                pad_i32: decode_bool(decoder, "ABI cast padding")?,
+                prefix: decoder.vec()?,
+                rest_offset: Option::<u64>::decode(decoder)?,
+                rest: AbiUniformPlan::decode(decoder)?,
+            }),
+            5 => Ok(Self::Indirect {
+                has_metadata: decode_bool(decoder, "ABI indirect metadata")?,
+                on_stack: decode_bool(decoder, "ABI indirect on-stack")?,
+            }),
+            tag => Err(ProtocolError::InvalidTag("ABI pass mode", tag)),
+        }
+    }
+}
+
+impl WireEncode for AbiValuePlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.u64(self.size);
+        encoder.u64(self.align);
+        self.mode.encode(encoder)
+    }
+}
+
+impl WireDecode for AbiValuePlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            size: decoder.u64()?,
+            align: decoder.u64()?,
+            mode: AbiPassModePlan::decode(decoder)?,
+        })
+    }
+}
+
+impl WireEncode for FnAbiPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        self.convention.encode(encoder)?;
+        encoder.u8(u8::from(self.variadic));
+        encoder.u32(self.fixed_count);
+        encoder.u8(u8::from(self.can_unwind));
+        encoder.vec(&self.arguments)?;
+        self.return_value.encode(encoder)
+    }
+}
+
+impl WireDecode for FnAbiPlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            convention: CallingConventionPlan::decode(decoder)?,
+            variadic: decode_bool(decoder, "ABI variadic")?,
+            fixed_count: decoder.u32()?,
+            can_unwind: decode_bool(decoder, "ABI can-unwind")?,
+            arguments: decoder.vec()?,
+            return_value: AbiValuePlan::decode(decoder)?,
+        })
+    }
+}
+
 impl WireEncode for FunctionPlan {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.string(&self.symbol)?;
+        self.abi.encode(encoder)?;
         encoder.vec(&self.argument_locals)?;
         self.return_local.encode(encoder)?;
         encoder.vec(&self.locals)?;
@@ -659,6 +915,7 @@ impl WireDecode for FunctionPlan {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
         Ok(Self {
             symbol: decoder.string()?,
+            abi: FnAbiPlan::decode(decoder)?,
             argument_locals: decoder.vec()?,
             return_local: Option::<u32>::decode(decoder)?,
             locals: decoder.vec()?,
@@ -670,6 +927,7 @@ impl WireDecode for FunctionPlan {
 impl WireEncode for ExternFunctionPlan {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.string(&self.symbol)?;
+        self.abi.encode(encoder)?;
         encoder.vec(&self.argument_types)?;
         self.return_type.encode(encoder)
     }
@@ -679,6 +937,7 @@ impl WireDecode for ExternFunctionPlan {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
         Ok(Self {
             symbol: decoder.string()?,
+            abi: FnAbiPlan::decode(decoder)?,
             argument_types: decoder.vec()?,
             return_type: Option::<ScalarType>::decode(decoder)?,
         })
@@ -982,6 +1241,35 @@ pub fn read_frame<R: Read, T: WireDecode>(mut reader: R) -> Result<T, ProtocolEr
 mod tests {
     use super::*;
 
+    fn direct_abi(arguments: Vec<(u64, u64)>, return_value: Option<(u64, u64)>) -> FnAbiPlan {
+        FnAbiPlan {
+            convention: CallingConventionPlan::C,
+            variadic: false,
+            fixed_count: u32::try_from(arguments.len()).unwrap(),
+            can_unwind: false,
+            arguments: arguments
+                .into_iter()
+                .map(|(size, align)| AbiValuePlan {
+                    size,
+                    align,
+                    mode: AbiPassModePlan::Direct,
+                })
+                .collect(),
+            return_value: match return_value {
+                Some((size, align)) => AbiValuePlan {
+                    size,
+                    align,
+                    mode: AbiPassModePlan::Direct,
+                },
+                None => AbiValuePlan {
+                    size: 0,
+                    align: 1,
+                    mode: AbiPassModePlan::Ignore,
+                },
+            },
+        }
+    }
+
     fn sample_request() -> CompileRequest {
         CompileRequest {
             request_id: 42,
@@ -999,16 +1287,19 @@ mod tests {
                 extern_functions: vec![
                     ExternFunctionPlan {
                         symbol: "host_add_i32".into(),
+                        abi: direct_abi(vec![(4, 4), (4, 4)], Some((4, 4))),
                         argument_types: vec![ScalarType::I32, ScalarType::I32],
                         return_type: Some(ScalarType::I32),
                     },
                     ExternFunctionPlan {
                         symbol: "host_note_i32".into(),
+                        abi: direct_abi(vec![(4, 4)], None),
                         argument_types: vec![ScalarType::I32],
                         return_type: None,
                     },
                     ExternFunctionPlan {
                         symbol: "host_identity_ptr".into(),
+                        abi: direct_abi(vec![(8, 8)], Some((8, 8))),
                         argument_types: vec![ScalarType::Ptr],
                         return_type: Some(ScalarType::Ptr),
                     },
@@ -1016,6 +1307,7 @@ mod tests {
                 functions: vec![
                     FunctionPlan {
                         symbol: "add_i32".into(),
+                        abi: direct_abi(vec![(4, 4), (4, 4)], Some((4, 4))),
                         argument_locals: vec![1, 2],
                         return_local: Some(0),
                         locals: vec![
@@ -1045,6 +1337,7 @@ mod tests {
                     },
                     FunctionPlan {
                         symbol: "note_i32".into(),
+                        abi: direct_abi(vec![(4, 4)], None),
                         argument_locals: vec![1],
                         return_local: None,
                         locals: vec![LocalPlan {

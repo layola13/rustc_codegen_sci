@@ -11,20 +11,22 @@ Baseline: 2026-07-16.
 - `c8f0fa1` through `0419a0e`: void calls, local scalar tuple/struct lowering,
   aggregate copy/move, and local empty-struct ZST values.
 - `5535a3c`: protocol-level `ptr` type and direct raw-pointer local/extern ABI.
+- `93f2f84`: null raw-pointer constants, pointer equality/inequality, thin
+  `PtrToPtr` copies, and project-local task/progress/current-plan tracking.
 
 ## Current Increment
 
-- Added raw-pointer null constants emitted as `value = 0 as ptr`.
-- Added worker-validated pointer equality/inequality while retaining hard errors
-  for ordered pointer comparisons and pointer arithmetic.
-- Added thin pointer `PtrToPtr` MIR casts as type-preserving copies.
-- Added C-linked smoke coverage for pointer equality, null tests, and null
-  pointer returns.
+- Added `PLAN_VERSION = 7` with `FnAbiPlan` on defined and extern functions.
+- Serialized rustc `FnAbi` convention, variadic/unwind flags, argument/return
+  layouts, and Ignore/Direct/Pair/Cast/Indirect pass modes.
+- Added worker validation that accepts the currently implemented Ignore/Direct
+  ABI modes and rejects Pair/Cast/Indirect before SCI object publication.
 - Verified with pinned rustfmt and `./scripts/test.sh`.
 
 ## Current Boundary
 
-The backend supports direct pointer values but not dereference, load/store,
-provenance-changing casts, nonzero pointer constants, allocations, or
-relocations. Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB,
-and strict proof remain incomplete.
+The backend supports direct pointer values and serializes rustc ABI evidence,
+but not dereference, load/store, provenance-changing casts, nonzero pointer
+constants, allocations, relocations, or non-Direct ABI lowering. Aggregate ABI,
+sysroot, Cargo productization, WASM, direct SAB, and strict proof remain
+incomplete.

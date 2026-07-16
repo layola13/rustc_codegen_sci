@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use sci_protocol::{
-    BasicBlockPlan, CompileRequest, CompileResponse, ExternFunctionPlan, FunctionPlan, Operation,
-    PLAN_VERSION, ScalarType, SciModulePlan, SwitchCasePlan, TerminatorPlan, ValueRef, read_frame,
-    write_frame,
+    AbiPassModePlan, BasicBlockPlan, CallingConventionPlan, CompileRequest, CompileResponse,
+    ExternFunctionPlan, FnAbiPlan, FunctionPlan, Operation, PLAN_VERSION, ScalarType,
+    SciModulePlan, SwitchCasePlan, TerminatorPlan, ValueRef, read_frame, write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
@@ -175,6 +175,12 @@ fn validate_symbol(kind: &str, symbol: &str) -> Result<(), String> {
 
 fn validate_extern_function(function: &ExternFunctionPlan) -> Result<(), String> {
     validate_symbol("extern function", &function.symbol)?;
+    validate_fn_abi(
+        &format!("extern function {}", function.symbol),
+        &function.abi,
+        function.argument_types.len(),
+        function.return_type.is_some(),
+    )?;
     if function
         .argument_types
         .iter()
@@ -194,12 +200,83 @@ fn validate_extern_function(function: &ExternFunctionPlan) -> Result<(), String>
     Ok(())
 }
 
+fn validate_fn_abi(
+    context: &str,
+    abi: &FnAbiPlan,
+    lowered_argument_count: usize,
+    has_return_value: bool,
+) -> Result<(), String> {
+    match &abi.convention {
+        CallingConventionPlan::C | CallingConventionPlan::Rust => {}
+        other => {
+            return Err(format!(
+                "{context} uses unsupported calling convention {other:?}"
+            ));
+        }
+    }
+    if abi.variadic {
+        return Err(format!("{context} uses unsupported variadic ABI"));
+    }
+    if abi.can_unwind {
+        return Err(format!("{context} uses unsupported unwinding ABI"));
+    }
+    if abi.arguments.len() != lowered_argument_count {
+        return Err(format!(
+            "{context} ABI has {} arguments but plan lowered {}",
+            abi.arguments.len(),
+            lowered_argument_count
+        ));
+    }
+    if abi.fixed_count
+        != u32::try_from(abi.arguments.len()).map_err(|_| format!("{context} has too many args"))?
+    {
+        return Err(format!(
+            "{context} ABI fixed_count does not match arguments"
+        ));
+    }
+    for (index, argument) in abi.arguments.iter().enumerate() {
+        validate_abi_value(context, &format!("argument {index}"), argument, true)?;
+    }
+    validate_abi_value(context, "return", &abi.return_value, has_return_value)?;
+    Ok(())
+}
+
+fn validate_abi_value(
+    context: &str,
+    label: &str,
+    value: &sci_protocol::AbiValuePlan,
+    is_lowered: bool,
+) -> Result<(), String> {
+    match value.mode {
+        AbiPassModePlan::Ignore if !is_lowered => Ok(()),
+        AbiPassModePlan::Direct if is_lowered => Ok(()),
+        AbiPassModePlan::Ignore | AbiPassModePlan::Direct => Err(format!(
+            "{context} ABI {label} mode does not match lowered value presence"
+        )),
+        AbiPassModePlan::Pair => Err(format!(
+            "{context} ABI {label} uses unsupported Pair pass mode"
+        )),
+        AbiPassModePlan::Cast { .. } => Err(format!(
+            "{context} ABI {label} uses unsupported Cast pass mode"
+        )),
+        AbiPassModePlan::Indirect { .. } => Err(format!(
+            "{context} ABI {label} uses unsupported Indirect pass mode"
+        )),
+    }
+}
+
 fn validate_function(
     function: &FunctionPlan,
     functions: &BTreeMap<&str, &FunctionPlan>,
     extern_functions: &BTreeMap<&str, &ExternFunctionPlan>,
 ) -> Result<(), String> {
     validate_symbol("function", &function.symbol)?;
+    validate_fn_abi(
+        &format!("function {}", function.symbol),
+        &function.abi,
+        function.argument_locals.len(),
+        function.return_local.is_some(),
+    )?;
 
     let locals: BTreeMap<u32, ScalarType> = function
         .locals
