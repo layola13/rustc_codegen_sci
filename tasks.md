@@ -14,12 +14,16 @@ Baseline: 2026-07-16.
 - [x] Null raw-pointer constants, pointer `Eq`/`Ne`, and thin `PtrToPtr` copy.
 - [x] `FnAbiPlan` wire schema carrying rustc layout, calling convention,
   variadic/unwind flags, and Ignore/Direct/Pair/Cast/Indirect pass modes.
+- [x] Worker ABI boundary tests rejecting Pair/Cast/Indirect before object
+  emission.
+- [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI
 
 - [ ] Serialize complete target descriptor and rustc DataLayout.
 - [ ] Add `TypeLayoutRecipe` with size, alignment, fields, variants, and niches.
 - [x] Add `FnAbiPlan` with Ignore, Direct, Pair, Cast, and Indirect pass modes.
+- [x] Add worker-level negative tests for unsupported non-Direct ABI modes.
 - [ ] Implement Pair/Cast/Indirect ABI lowering and object emission.
 - [ ] Build 20-30 bidirectional C/LLVM ABI fixtures.
 - [ ] Add structured diagnostic codes and rustc span/MIR locations.

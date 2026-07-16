@@ -11,6 +11,8 @@ Baseline date: 2026-07-16.
 - rustc-derived `FnAbiPlan` metadata serialized for defined and extern
   functions, including layout, calling convention, variadic/unwind flags, and
   Ignore/Direct/Pair/Cast/Indirect pass mode tags.
+- Worker unit coverage for the ABI boundary: Direct/Ignore is accepted and
+  Pair/Cast/Indirect is rejected before object publication.
 - Versioned framed worker RPC with bounded frame sizes.
 - Worker-side target and plan validation.
 - SA text emitter from the canonical plan.

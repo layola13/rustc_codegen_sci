@@ -13,14 +13,16 @@ Baseline: 2026-07-16.
 - `5535a3c`: protocol-level `ptr` type and direct raw-pointer local/extern ABI.
 - `93f2f84`: null raw-pointer constants, pointer equality/inequality, thin
   `PtrToPtr` copies, and project-local task/progress/current-plan tracking.
+- `f7d864e`: rustc-derived `FnAbiPlan` serialization on defined/extern
+  functions and worker validation for currently implemented ABI modes.
 
 ## Current Increment
 
-- Added `PLAN_VERSION = 7` with `FnAbiPlan` on defined and extern functions.
-- Serialized rustc `FnAbi` convention, variadic/unwind flags, argument/return
-  layouts, and Ignore/Direct/Pair/Cast/Indirect pass modes.
-- Added worker validation that accepts the currently implemented Ignore/Direct
-  ABI modes and rejects Pair/Cast/Indirect before SCI object publication.
+- Added worker unit coverage for the ABI validation boundary.
+- Confirmed Direct arguments with Ignore returns validate.
+- Confirmed Pair, Cast, and Indirect argument pass modes hard-error before SA
+  or object emission.
+- Extended `./scripts/test.sh` so worker unit tests run in the standard gate.
 - Verified with pinned rustfmt and `./scripts/test.sh`.
 
 ## Current Boundary

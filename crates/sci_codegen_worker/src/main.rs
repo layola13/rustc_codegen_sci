@@ -1132,3 +1132,96 @@ fn switch_otherwise_label(function: &FunctionPlan, block_id: u32) -> String {
         block_id
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sci_protocol::{AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan};
+
+    fn abi_value(mode: AbiPassModePlan) -> AbiValuePlan {
+        AbiValuePlan {
+            size: 8,
+            align: 8,
+            mode,
+        }
+    }
+
+    fn fn_abi(arguments: Vec<AbiValuePlan>, return_value: AbiValuePlan) -> FnAbiPlan {
+        FnAbiPlan {
+            convention: CallingConventionPlan::C,
+            variadic: false,
+            fixed_count: arguments.len() as u32,
+            can_unwind: false,
+            arguments,
+            return_value,
+        }
+    }
+
+    fn integer_register(bits: u64) -> AbiRegisterPlan {
+        AbiRegisterPlan {
+            kind: AbiRegisterKind::Integer,
+            bits,
+        }
+    }
+
+    fn assert_abi_error_contains(abi: FnAbiPlan, expected: &str) {
+        let err = validate_fn_abi("test_fn", &abi, abi.arguments.len(), false)
+            .expect_err("ABI should be rejected");
+        assert!(
+            err.contains(expected),
+            "expected diagnostic containing `{expected}`, got `{err}`"
+        );
+    }
+
+    #[test]
+    fn direct_arguments_and_ignored_return_are_accepted() {
+        let abi = fn_abi(
+            vec![abi_value(AbiPassModePlan::Direct)],
+            abi_value(AbiPassModePlan::Ignore),
+        );
+
+        validate_fn_abi("test_fn", &abi, 1, false).expect("direct ABI should validate");
+    }
+
+    #[test]
+    fn pair_argument_is_rejected_before_emission() {
+        let abi = fn_abi(
+            vec![abi_value(AbiPassModePlan::Pair)],
+            abi_value(AbiPassModePlan::Ignore),
+        );
+
+        assert_abi_error_contains(abi, "unsupported Pair pass mode");
+    }
+
+    #[test]
+    fn cast_argument_is_rejected_before_emission() {
+        let abi = fn_abi(
+            vec![abi_value(AbiPassModePlan::Cast {
+                pad_i32: false,
+                prefix: vec![integer_register(64)],
+                rest_offset: None,
+                rest: AbiUniformPlan {
+                    unit: integer_register(64),
+                    total_bytes: 8,
+                    consecutive: true,
+                },
+            })],
+            abi_value(AbiPassModePlan::Ignore),
+        );
+
+        assert_abi_error_contains(abi, "unsupported Cast pass mode");
+    }
+
+    #[test]
+    fn indirect_argument_is_rejected_before_emission() {
+        let abi = fn_abi(
+            vec![abi_value(AbiPassModePlan::Indirect {
+                has_metadata: false,
+                on_stack: true,
+            })],
+            abi_value(AbiPassModePlan::Ignore),
+        );
+
+        assert_abi_error_contains(abi, "unsupported Indirect pass mode");
+    }
+}

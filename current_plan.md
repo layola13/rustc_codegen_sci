@@ -14,14 +14,17 @@ No LLVM backend fallback and no `bc2sa` fallback.
 
 ## Current Window
 
-1. Build 20-30 ABI fixtures over the serialized rustc `FnAbiPlan`, starting
-   with Pair/Cast/Indirect detection and compile-fail coverage.
-2. Implement the first Pair/Indirect C ABI fixtures and aggregate return/arg
+1. Land worker/protocol ABI rejection coverage for Pair/Cast/Indirect while
+   backend aggregate lowering still gates real Rust source fixtures earlier.
+2. Build 20-30 ABI fixtures over the serialized rustc `FnAbiPlan`, starting
+   with real Rust aggregate arg/return cases once lowering reaches worker
+   validation.
+3. Implement the first Pair/Indirect C ABI fixtures and aggregate return/arg
    lowering against rustc `FnAbi` evidence.
-3. Add target-qualified stack/load/store plans with size and alignment, then
+4. Add target-qualified stack/load/store plans with size and alignment, then
    connect local aggregates to memory representation.
-4. Add allocation images and relocations for statics, strings, and panic data.
-5. Add direct SAB no-fallback emission from the same canonical plan.
+5. Add allocation images and relocations for statics, strings, and panic data.
+6. Add direct SAB no-fallback emission from the same canonical plan.
 
 ## Exit Gates
 
