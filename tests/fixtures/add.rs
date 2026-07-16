@@ -79,3 +79,13 @@ pub extern "C" fn sci_match_u32(a: u32) -> i32 {
         _ => -1,
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_match_i32(a: i32) -> i32 {
+    match a {
+        -7 => 7,
+        -1 => 1,
+        0 => 0,
+        _ => -42,
+    }
+}
