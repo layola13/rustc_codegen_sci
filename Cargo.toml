@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rustc_codegen_sci",
+    "crates/sci_codegen_worker",
+    "crates/sci_protocol",
+]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.99"
+version = "0.1.0"
+
+[workspace.dependencies]
+sci_protocol = { path = "crates/sci_protocol" }
+
+[profile.dev]
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

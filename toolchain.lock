@@ -1,0 +1,11 @@
+rust_commit=fcbe7917ba18120d9eda136f1c7c5a60c78e554e
+rustc_release=1.99.0-nightly
+rustc_commit_date=2026-07-15
+host=x86_64-unknown-linux-gnu
+llvm=22.1.8
+rustc=/root/projects/rust/build/x86_64-unknown-linux-gnu/stage2/bin/rustc
+cargo=/root/projects/rust/build/x86_64-unknown-linux-gnu/stage2-tools-bin/cargo
+sysroot=/root/projects/rust/build/x86_64-unknown-linux-gnu/stage1
+sci=/root/projects/sci/zig-out/bin/sa
+sci_version=0.0.4
+

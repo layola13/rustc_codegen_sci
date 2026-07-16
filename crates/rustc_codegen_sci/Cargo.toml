@@ -1,0 +1,17 @@
+[package]
+name = "rustc_codegen_sci"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["dylib"]
+path = "src/lib.rs"
+
+[dependencies]
+sci_protocol.workspace = true
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+

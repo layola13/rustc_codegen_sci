@@ -1,0 +1,8 @@
+/target/
+/dist/
+/artifacts/
+/.sa_cache/
+/.sa-output-locks/
+*.rlib
+*.rmeta
+*.sa.bc
