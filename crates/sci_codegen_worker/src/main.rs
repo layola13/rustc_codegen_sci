@@ -185,7 +185,7 @@ fn validate_extern_function(function: &ExternFunctionPlan) -> Result<(), String>
             function.symbol
         ));
     }
-    if function.return_type == ScalarType::I1 {
+    if function.return_type == Some(ScalarType::I1) {
         return Err(format!(
             "extern function {} uses unsupported i1 ABI return",
             function.symbol
@@ -209,7 +209,9 @@ fn validate_function(
     if locals.len() != function.locals.len() {
         return Err(format!("{} has duplicate local ids", function.symbol));
     }
-    if !locals.contains_key(&function.return_local) {
+    if let Some(return_local) = function.return_local
+        && !locals.contains_key(&return_local)
+    {
         return Err(format!("{} return local is missing", function.symbol));
     }
     for argument in &function.argument_locals {
@@ -401,7 +403,9 @@ fn validate_terminator(
 ) -> Result<(), String> {
     match terminator {
         TerminatorPlan::Return => {
-            if !defined.contains(&function.return_local) {
+            if let Some(return_local) = function.return_local
+                && !defined.contains(&return_local)
+            {
                 return Err(format!(
                     "{} return local is not initialized",
                     function.symbol
@@ -481,12 +485,29 @@ fn validate_terminator(
                         ));
                     }
                 }
-                validate_destination(locals, *destination)?;
-                if locals[destination] != callee_locals[&callee_function.return_local] {
-                    return Err(format!(
-                        "{} call to {} has return type mismatch",
-                        function.symbol, callee_function.symbol
-                    ));
+                match (destination, callee_function.return_local) {
+                    (Some(destination), Some(return_local)) => {
+                        validate_destination(locals, *destination)?;
+                        if locals[destination] != callee_locals[&return_local] {
+                            return Err(format!(
+                                "{} call to {} has return type mismatch",
+                                function.symbol, callee_function.symbol
+                            ));
+                        }
+                    }
+                    (None, None) => {}
+                    (Some(_), None) => {
+                        return Err(format!(
+                            "{} call to void function {} has a destination",
+                            function.symbol, callee_function.symbol
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(format!(
+                            "{} call to {} is missing a destination",
+                            function.symbol, callee_function.symbol
+                        ));
+                    }
                 }
                 return Ok(());
             }
@@ -511,12 +532,29 @@ fn validate_terminator(
                     ));
                 }
             }
-            validate_destination(locals, *destination)?;
-            if locals[destination] != extern_function.return_type {
-                return Err(format!(
-                    "{} call to {} has return type mismatch",
-                    function.symbol, extern_function.symbol
-                ));
+            match (destination, extern_function.return_type) {
+                (Some(destination), Some(return_type)) => {
+                    validate_destination(locals, *destination)?;
+                    if locals[destination] != return_type {
+                        return Err(format!(
+                            "{} call to {} has return type mismatch",
+                            function.symbol, extern_function.symbol
+                        ));
+                    }
+                }
+                (None, None) => {}
+                (Some(_), None) => {
+                    return Err(format!(
+                        "{} call to void extern {} has a destination",
+                        function.symbol, extern_function.symbol
+                    ));
+                }
+                (None, Some(_)) => {
+                    return Err(format!(
+                        "{} call to {} is missing a destination",
+                        function.symbol, extern_function.symbol
+                    ));
+                }
             }
         }
     }
@@ -578,7 +616,7 @@ fn terminator_successors(terminator: &TerminatorPlan) -> Vec<u32> {
 
 fn terminator_destination(terminator: &TerminatorPlan) -> Option<u32> {
     match terminator {
-        TerminatorPlan::Call { destination, .. } => Some(*destination),
+        TerminatorPlan::Call { destination, .. } => *destination,
         TerminatorPlan::Return
         | TerminatorPlan::Goto { .. }
         | TerminatorPlan::Branch { .. }
@@ -635,7 +673,10 @@ fn emit_extern_function(out: &mut String, function: &ExternFunctionPlan) {
         out.push_str(&format!("arg{index}: {}", ty.sa_name()));
     }
     out.push_str(") -> ");
-    out.push_str(function.return_type.sa_name());
+    match function.return_type {
+        Some(return_type) => out.push_str(return_type.sa_name()),
+        None => out.push_str("void"),
+    }
     out.push('\n');
 }
 
@@ -645,10 +686,6 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
         .iter()
         .map(|local| (local.id, local.ty))
         .collect();
-    let return_ty = locals
-        .get(&function.return_local)
-        .ok_or_else(|| "missing return local type".to_string())?;
-
     out.push_str("@export ");
     out.push_str(&function.symbol);
     out.push('(');
@@ -661,7 +698,15 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
         out.push_str(locals[local].sa_name());
     }
     out.push_str(") -> ");
-    out.push_str(return_ty.sa_name());
+    match function.return_local {
+        Some(return_local) => {
+            let return_ty = locals
+                .get(&return_local)
+                .ok_or_else(|| "missing return local type".to_string())?;
+            out.push_str(return_ty.sa_name());
+        }
+        None => out.push_str("void"),
+    }
     out.push_str(":\n");
 
     let block_entries = compute_block_entries(function, &locals)?;
@@ -736,15 +781,22 @@ fn emit_terminator(
     match terminator {
         TerminatorPlan::Return => {
             let mut releasable = defined.clone();
-            releasable.remove(&function.return_local);
+            if let Some(return_local) = function.return_local {
+                releasable.remove(&return_local);
+            }
             for local in releasable.into_iter().rev() {
                 out.push_str("    !");
                 out.push_str(&local_name(local));
                 out.push('\n');
             }
-            out.push_str("    return ");
-            out.push_str(&local_name(function.return_local));
-            out.push('\n');
+            match function.return_local {
+                Some(return_local) => {
+                    out.push_str("    return ");
+                    out.push_str(&local_name(return_local));
+                    out.push('\n');
+                }
+                None => out.push_str("    return\n"),
+            }
         }
         TerminatorPlan::Goto { target } => {
             out.push_str("    jmp ");
@@ -807,8 +859,11 @@ fn emit_terminator(
             target,
         } => {
             out.push_str("    ");
-            out.push_str(&local_name(*destination));
-            out.push_str(" = call @");
+            if let Some(destination) = destination {
+                out.push_str(&local_name(*destination));
+                out.push_str(" = ");
+            }
+            out.push_str("call @");
             out.push_str(callee);
             out.push('(');
             for (index, arg) in args.iter().enumerate() {

@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 1;
-pub const PLAN_VERSION: u16 = 4;
+pub const PLAN_VERSION: u16 = 5;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,7 +175,7 @@ pub struct LocalPlan {
 pub struct FunctionPlan {
     pub symbol: String,
     pub argument_locals: Vec<u32>,
-    pub return_local: u32,
+    pub return_local: Option<u32>,
     pub locals: Vec<LocalPlan>,
     pub blocks: Vec<BasicBlockPlan>,
 }
@@ -184,7 +184,7 @@ pub struct FunctionPlan {
 pub struct ExternFunctionPlan {
     pub symbol: String,
     pub argument_types: Vec<ScalarType>,
-    pub return_type: ScalarType,
+    pub return_type: Option<ScalarType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -225,7 +225,7 @@ pub enum TerminatorPlan {
     Call {
         callee: String,
         args: Vec<ValueRef>,
-        destination: u32,
+        destination: Option<u32>,
         target: u32,
     },
 }
@@ -439,6 +439,29 @@ impl WireDecode for u32 {
     }
 }
 
+impl<T: WireEncode> WireEncode for Option<T> {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        match self {
+            Some(value) => {
+                encoder.u8(1);
+                value.encode(encoder)?;
+            }
+            None => encoder.u8(0),
+        }
+        Ok(())
+    }
+}
+
+impl<T: WireDecode> WireDecode for Option<T> {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        match decoder.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(T::decode(decoder)?)),
+            tag => Err(ProtocolError::InvalidTag("option", tag)),
+        }
+    }
+}
+
 impl WireEncode for ScalarType {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.u8(*self as u8);
@@ -623,7 +646,7 @@ impl WireEncode for FunctionPlan {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.string(&self.symbol)?;
         encoder.vec(&self.argument_locals)?;
-        encoder.u32(self.return_local);
+        self.return_local.encode(encoder)?;
         encoder.vec(&self.locals)?;
         encoder.vec(&self.blocks)
     }
@@ -634,7 +657,7 @@ impl WireDecode for FunctionPlan {
         Ok(Self {
             symbol: decoder.string()?,
             argument_locals: decoder.vec()?,
-            return_local: decoder.u32()?,
+            return_local: Option::<u32>::decode(decoder)?,
             locals: decoder.vec()?,
             blocks: decoder.vec()?,
         })
@@ -654,7 +677,7 @@ impl WireDecode for ExternFunctionPlan {
         Ok(Self {
             symbol: decoder.string()?,
             argument_types: decoder.vec()?,
-            return_type: ScalarType::decode(decoder)?,
+            return_type: Option::<ScalarType>::decode(decoder)?,
         })
     }
 }
@@ -743,7 +766,7 @@ impl WireEncode for TerminatorPlan {
                 encoder.u8(4);
                 encoder.string(callee)?;
                 encoder.vec(args)?;
-                encoder.u32(*destination);
+                destination.encode(encoder)?;
                 encoder.u32(*target);
             }
         }
@@ -766,7 +789,7 @@ impl WireDecode for TerminatorPlan {
             4 => Ok(Self::Call {
                 callee: decoder.string()?,
                 args: decoder.vec()?,
-                destination: decoder.u32()?,
+                destination: Option::<u32>::decode(decoder)?,
                 target: decoder.u32()?,
             }),
             5 => Ok(Self::Assert {
@@ -970,40 +993,75 @@ mod tests {
                     endian: Endian::Little,
                 },
                 cgu_name: "add".into(),
-                extern_functions: vec![ExternFunctionPlan {
-                    symbol: "host_add_i32".into(),
-                    argument_types: vec![ScalarType::I32, ScalarType::I32],
-                    return_type: ScalarType::I32,
-                }],
-                functions: vec![FunctionPlan {
-                    symbol: "add_i32".into(),
-                    argument_locals: vec![1, 2],
-                    return_local: 0,
-                    locals: vec![
-                        LocalPlan {
+                extern_functions: vec![
+                    ExternFunctionPlan {
+                        symbol: "host_add_i32".into(),
+                        argument_types: vec![ScalarType::I32, ScalarType::I32],
+                        return_type: Some(ScalarType::I32),
+                    },
+                    ExternFunctionPlan {
+                        symbol: "host_note_i32".into(),
+                        argument_types: vec![ScalarType::I32],
+                        return_type: None,
+                    },
+                ],
+                functions: vec![
+                    FunctionPlan {
+                        symbol: "add_i32".into(),
+                        argument_locals: vec![1, 2],
+                        return_local: Some(0),
+                        locals: vec![
+                            LocalPlan {
+                                id: 0,
+                                ty: ScalarType::I32,
+                            },
+                            LocalPlan {
+                                id: 1,
+                                ty: ScalarType::I32,
+                            },
+                            LocalPlan {
+                                id: 2,
+                                ty: ScalarType::I32,
+                            },
+                        ],
+                        blocks: vec![BasicBlockPlan {
                             id: 0,
-                            ty: ScalarType::I32,
-                        },
-                        LocalPlan {
+                            operations: vec![Operation::Binary {
+                                dst: 0,
+                                op: BinaryOp::Add,
+                                lhs: ValueRef::Local(1),
+                                rhs: ValueRef::Local(2),
+                            }],
+                            terminator: TerminatorPlan::Return,
+                        }],
+                    },
+                    FunctionPlan {
+                        symbol: "note_i32".into(),
+                        argument_locals: vec![1],
+                        return_local: None,
+                        locals: vec![LocalPlan {
                             id: 1,
                             ty: ScalarType::I32,
-                        },
-                        LocalPlan {
-                            id: 2,
-                            ty: ScalarType::I32,
-                        },
-                    ],
-                    blocks: vec![BasicBlockPlan {
-                        id: 0,
-                        operations: vec![Operation::Binary {
-                            dst: 0,
-                            op: BinaryOp::Add,
-                            lhs: ValueRef::Local(1),
-                            rhs: ValueRef::Local(2),
                         }],
-                        terminator: TerminatorPlan::Return,
-                    }],
-                }],
+                        blocks: vec![
+                            BasicBlockPlan {
+                                id: 0,
+                                operations: Vec::new(),
+                                terminator: TerminatorPlan::Call {
+                                    callee: "host_note_i32".into(),
+                                    args: vec![ValueRef::Local(1)],
+                                    destination: None,
+                                    target: 1,
+                                },
+                            },
+                            BasicBlockPlan {
+                                id: 1,
+                                operations: Vec::new(),
+                                terminator: TerminatorPlan::Return,
+                            },
+                        ],
+                    },
+                ],
             },
         }
     }

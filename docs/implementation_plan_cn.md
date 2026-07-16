@@ -215,7 +215,7 @@ WASM 不应在 M0 前做，因为当前 SCI native emitter 不能再依赖 host 
 
 1. 已完成 `Assert`、div/rem/shift/unary、multi-way switch、checked add/sub/mul 覆盖到 64 位整数和 smoke 扩展。
 2. 已升级到 `PLAN_VERSION = 4`，包含 target-qualified header 与模块级 extern function plan。
-3. 当前增量已完成直接标量 `extern "C"` 调用；下一步做 20-30 个 ABI fixture，优先 Direct/Pair/Cast/Indirect/sret/byval。
+3. 当前增量已完成直接标量/void `extern "C"` 调用；下一步做 20-30 个 ABI fixture，优先 Direct/Pair/Cast/Indirect/sret/byval。
 4. 做 static allocation/relocation 最小闭环，支持字符串与 panic metadata。
 5. 引入 direct SAB no-fallback 路径，与 SA text parity。
 6. 做 proof-aware manifest/cache，不让 stock rustc work-product 路径独自决定复用。

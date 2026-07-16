@@ -254,6 +254,13 @@ fn lower_function<'tcx>(
                 id: local_id(local),
                 ty,
             });
+        } else if is_unit_ty(ty) {
+            if local.index() != 0 && local.index() <= mir.arg_count {
+                return Err(format!(
+                    "{}: unit function arguments are not supported by the current ABI plan",
+                    tcx.symbol_name(instance).name
+                ));
+            }
         } else if let Some((value_ty, overflow_ty)) = checked_tuple_types(ty) {
             let value_id = state.synthetic_tuple_field(local, 0);
             let overflow_id = state.synthetic_tuple_field(local, 1);
@@ -276,9 +283,23 @@ fn lower_function<'tcx>(
     }
 
     let argument_locals = (0..mir.arg_count)
-        .map(|index| local_id(rustc_middle::mir::Local::arg(index)))
+        .map(|index| rustc_middle::mir::Local::arg(index))
+        .filter(|local| {
+            let ty = monomorphize_ty(tcx, instance, mir.local_decls[*local].ty);
+            !is_unit_ty(ty)
+        })
+        .map(local_id)
         .collect();
-    let return_local = local_id(rustc_middle::mir::RETURN_PLACE);
+    let return_ty = monomorphize_ty(
+        tcx,
+        instance,
+        mir.local_decls[rustc_middle::mir::RETURN_PLACE].ty,
+    );
+    let return_local = if is_unit_ty(return_ty) {
+        None
+    } else {
+        Some(local_id(rustc_middle::mir::RETURN_PLACE))
+    };
 
     let mut blocks = Vec::with_capacity(mir.basic_blocks.len());
     for (block_id, block) in mir.basic_blocks.iter_enumerated() {
@@ -473,7 +494,7 @@ fn lower_terminator<'tcx>(
             Ok(TerminatorPlan::Call {
                 callee: callee_symbol,
                 args,
-                destination: lower_destination(state, *destination)?,
+                destination: lower_call_destination(tcx, instance, mir, state, *destination)?,
                 target: block_id_id(target),
             })
         }
@@ -582,23 +603,36 @@ fn lower_extern_function<'tcx>(
         argument_types.push(scalar);
     }
 
-    let return_ty = monomorphize_ty(tcx, caller, destination.ty(&mir.local_decls, tcx).ty);
-    let return_type = scalar_type_for_ty(return_ty).ok_or_else(|| {
-        format!(
-            "{}: extern callee `{}` return destination has unsupported type `{}`",
-            tcx.symbol_name(caller).name,
-            tcx.def_path_str(callee.def_id()),
-            return_ty
-        )
-    })?;
     let sig_return_ty = monomorphize_ty(tcx, caller, sig.output().skip_binder());
-    if scalar_type_for_ty(sig_return_ty) != Some(return_type) {
-        return Err(format!(
-            "{}: extern callee `{}` return type does not match destination",
-            tcx.symbol_name(caller).name,
-            tcx.def_path_str(callee.def_id())
-        ));
-    }
+    let destination_ty = monomorphize_ty(tcx, caller, destination.ty(&mir.local_decls, tcx).ty);
+    let return_type = if is_unit_ty(sig_return_ty) {
+        if !is_unit_ty(destination_ty) {
+            return Err(format!(
+                "{}: void extern callee `{}` returns into non-unit destination `{}`",
+                tcx.symbol_name(caller).name,
+                tcx.def_path_str(callee.def_id()),
+                destination_ty
+            ));
+        }
+        None
+    } else {
+        let return_type = scalar_type_for_ty(destination_ty).ok_or_else(|| {
+            format!(
+                "{}: extern callee `{}` return destination has unsupported type `{}`",
+                tcx.symbol_name(caller).name,
+                tcx.def_path_str(callee.def_id()),
+                destination_ty
+            )
+        })?;
+        if scalar_type_for_ty(sig_return_ty) != Some(return_type) {
+            return Err(format!(
+                "{}: extern callee `{}` return type does not match destination",
+                tcx.symbol_name(caller).name,
+                tcx.def_path_str(callee.def_id())
+            ));
+        }
+        Some(return_type)
+    };
 
     Ok(ExternFunctionPlan {
         symbol: tcx.symbol_name(callee).name.to_string(),
@@ -615,6 +649,11 @@ fn lower_assignment<'tcx>(
     place: Place<'tcx>,
     rvalue: &Rvalue<'tcx>,
 ) -> Result<Vec<Operation>, String> {
+    let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
+    if is_unit_ty(place_ty) {
+        return Ok(Vec::new());
+    }
+
     if let Rvalue::BinaryOp(
         op @ (BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow),
         operands,
@@ -1525,6 +1564,21 @@ fn lower_destination(state: &LoweringState, place: Place<'_>) -> Result<u32, Str
     }
 }
 
+fn lower_call_destination<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    state: &LoweringState,
+    place: Place<'tcx>,
+) -> Result<Option<u32>, String> {
+    let ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
+    if is_unit_ty(ty) {
+        Ok(None)
+    } else {
+        lower_destination(state, place).map(Some)
+    }
+}
+
 fn lower_place_as_value(state: &LoweringState, place: Place<'_>) -> Result<ValueRef, String> {
     if place.projection.is_empty() {
         return Ok(ValueRef::Local(local_id(place.local)));
@@ -1561,6 +1615,10 @@ fn scalar_type_for_ty(ty: Ty<'_>) -> Option<ScalarType> {
         ty::Uint(ty::UintTy::U64 | ty::UintTy::Usize) => Some(ScalarType::U64),
         _ => None,
     }
+}
+
+fn is_unit_ty(ty: Ty<'_>) -> bool {
+    matches!(ty.kind(), ty::Tuple(fields) if fields.is_empty())
 }
 
 fn checked_tuple_types(ty: Ty<'_>) -> Option<(ScalarType, ScalarType)> {

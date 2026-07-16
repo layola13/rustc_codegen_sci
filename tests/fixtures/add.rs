@@ -2,6 +2,7 @@
 
 unsafe extern "C" {
     fn sci_host_add_i32(a: i32, b: i32) -> i32;
+    fn sci_host_note_i32(value: i32);
 }
 
 #[unsafe(no_mangle)]
@@ -28,6 +29,22 @@ pub extern "C" fn sci_call_add_i32(a: i32, b: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sci_call_host_add_i32(a: i32, b: i32) -> i32 {
     unsafe { sci_host_add_i32(a, b) }
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn sci_unit_noop(_a: i32) {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_call_unit_noop(a: i32) -> i32 {
+    sci_unit_noop(a);
+    42
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_call_host_note_i32(a: i32) -> i32 {
+    unsafe { sci_host_note_i32(a) };
+    42
 }
 
 #[unsafe(no_mangle)]

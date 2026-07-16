@@ -5,6 +5,9 @@ extern int32_t sci_gt_i32(int32_t a, int32_t b);
 extern int32_t sci_max_i32(int32_t a, int32_t b);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
+extern void sci_unit_noop(int32_t a);
+extern int32_t sci_call_unit_noop(int32_t a);
+extern int32_t sci_call_host_note_i32(int32_t a);
 extern int32_t sci_sub_i32(int32_t a, int32_t b);
 extern int32_t sci_mul_i32(int32_t a, int32_t b);
 extern int64_t sci_mul_i64(int64_t a, int64_t b);
@@ -23,6 +26,12 @@ extern int32_t sci_match_i32(int32_t a);
 
 int32_t sci_host_add_i32(int32_t a, int32_t b) {
     return a + b;
+}
+
+static int32_t host_note_total = 0;
+
+void sci_host_note_i32(int32_t value) {
+    host_note_total += value;
 }
 
 int main(void) {
@@ -46,6 +55,16 @@ int main(void) {
     }
     if (sci_call_host_add_i32(20, 22) != 42) {
         return 19;
+    }
+    sci_unit_noop(5);
+    if (sci_call_unit_noop(7) != 42) {
+        return 29;
+    }
+    if (sci_call_host_note_i32(42) != 42) {
+        return 30;
+    }
+    if (host_note_total != 42) {
+        return 31;
     }
     if (sci_sub_i32(50, 8) != 42) {
         return 7;
