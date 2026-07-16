@@ -821,6 +821,14 @@ fn append_mul_overflow_check<'tcx>(
     let wide_ty = match (ty, signed) {
         (ScalarType::I8 | ScalarType::I16 | ScalarType::I32, true) => ScalarType::I64,
         (ScalarType::U8 | ScalarType::U16 | ScalarType::U32, false) => ScalarType::U64,
+        (ScalarType::I64, true) => {
+            append_signed_i64_mul_overflow_check(state, operations, lhs, rhs, overflow_dst);
+            return Ok(());
+        }
+        (ScalarType::U64, false) => {
+            append_unsigned_u64_mul_overflow_check(state, operations, lhs, rhs, overflow_dst);
+            return Ok(());
+        }
         _ => {
             return Err(format!(
                 "{}: checked multiplication for {:?} is not yet supported",
@@ -865,6 +873,344 @@ fn append_mul_overflow_check<'tcx>(
         rhs: ValueRef::Local(result_wide),
     });
     Ok(())
+}
+
+fn append_unsigned_u64_mul_overflow_check(
+    state: &mut LoweringState,
+    operations: &mut Vec<Operation>,
+    lhs: ValueRef,
+    rhs: ValueRef,
+    overflow_dst: u32,
+) {
+    let mask32 = ValueRef::Integer {
+        ty: ScalarType::U64,
+        bits: u32::MAX.into(),
+    };
+    let shift32 = ValueRef::Integer {
+        ty: ScalarType::U64,
+        bits: 32,
+    };
+    let zero = ValueRef::Integer {
+        ty: ScalarType::U64,
+        bits: 0,
+    };
+
+    let lhs_low = state.allocate_temp(ScalarType::U64);
+    let rhs_low = state.allocate_temp(ScalarType::U64);
+    let lhs_high = state.allocate_temp(ScalarType::U64);
+    let rhs_high = state.allocate_temp(ScalarType::U64);
+    let low_product = state.allocate_temp(ScalarType::U64);
+    let cross_left = state.allocate_temp(ScalarType::U64);
+    let cross_right = state.allocate_temp(ScalarType::U64);
+    let high_product = state.allocate_temp(ScalarType::U64);
+    let low_carry = state.allocate_temp(ScalarType::U64);
+    let cross_sum1 = state.allocate_temp(ScalarType::U64);
+    let cross_carry1 = state.allocate_temp(ScalarType::I1);
+    let cross_sum2 = state.allocate_temp(ScalarType::U64);
+    let cross_carry2 = state.allocate_temp(ScalarType::I1);
+    let cross_high = state.allocate_temp(ScalarType::U64);
+    let high_nonzero = state.allocate_temp(ScalarType::I1);
+    let cross_nonzero = state.allocate_temp(ScalarType::I1);
+    let high_or_carry = state.allocate_temp(ScalarType::I1);
+    let cross_or_carry = state.allocate_temp(ScalarType::I1);
+
+    operations.push(Operation::Binary {
+        dst: lhs_low,
+        op: BinaryOp::BitAnd,
+        lhs: lhs.clone(),
+        rhs: mask32.clone(),
+    });
+    operations.push(Operation::Binary {
+        dst: rhs_low,
+        op: BinaryOp::BitAnd,
+        lhs: rhs.clone(),
+        rhs: mask32,
+    });
+    operations.push(Operation::Binary {
+        dst: lhs_high,
+        op: BinaryOp::LShr,
+        lhs: lhs,
+        rhs: shift32.clone(),
+    });
+    operations.push(Operation::Binary {
+        dst: rhs_high,
+        op: BinaryOp::LShr,
+        lhs: rhs,
+        rhs: shift32.clone(),
+    });
+    operations.push(Operation::Binary {
+        dst: low_product,
+        op: BinaryOp::Mul,
+        lhs: ValueRef::Local(lhs_low),
+        rhs: ValueRef::Local(rhs_low),
+    });
+    operations.push(Operation::Binary {
+        dst: cross_left,
+        op: BinaryOp::Mul,
+        lhs: ValueRef::Local(lhs_high),
+        rhs: ValueRef::Local(rhs_low),
+    });
+    operations.push(Operation::Binary {
+        dst: cross_right,
+        op: BinaryOp::Mul,
+        lhs: ValueRef::Local(lhs_low),
+        rhs: ValueRef::Local(rhs_high),
+    });
+    operations.push(Operation::Binary {
+        dst: high_product,
+        op: BinaryOp::Mul,
+        lhs: ValueRef::Local(lhs_high),
+        rhs: ValueRef::Local(rhs_high),
+    });
+    operations.push(Operation::Binary {
+        dst: low_carry,
+        op: BinaryOp::LShr,
+        lhs: ValueRef::Local(low_product),
+        rhs: shift32.clone(),
+    });
+    operations.push(Operation::Binary {
+        dst: cross_sum1,
+        op: BinaryOp::Add,
+        lhs: ValueRef::Local(cross_left),
+        rhs: ValueRef::Local(low_carry),
+    });
+    operations.push(Operation::Compare {
+        dst: cross_carry1,
+        op: CompareOp::Ult,
+        lhs: ValueRef::Local(cross_sum1),
+        rhs: ValueRef::Local(cross_left),
+    });
+    operations.push(Operation::Binary {
+        dst: cross_sum2,
+        op: BinaryOp::Add,
+        lhs: ValueRef::Local(cross_sum1),
+        rhs: ValueRef::Local(cross_right),
+    });
+    operations.push(Operation::Compare {
+        dst: cross_carry2,
+        op: CompareOp::Ult,
+        lhs: ValueRef::Local(cross_sum2),
+        rhs: ValueRef::Local(cross_sum1),
+    });
+    operations.push(Operation::Binary {
+        dst: cross_high,
+        op: BinaryOp::LShr,
+        lhs: ValueRef::Local(cross_sum2),
+        rhs: shift32,
+    });
+    operations.push(Operation::Compare {
+        dst: high_nonzero,
+        op: CompareOp::Ne,
+        lhs: ValueRef::Local(high_product),
+        rhs: zero.clone(),
+    });
+    operations.push(Operation::Compare {
+        dst: cross_nonzero,
+        op: CompareOp::Ne,
+        lhs: ValueRef::Local(cross_high),
+        rhs: zero,
+    });
+    operations.push(Operation::Binary {
+        dst: high_or_carry,
+        op: BinaryOp::BitOr,
+        lhs: ValueRef::Local(high_nonzero),
+        rhs: ValueRef::Local(cross_carry1),
+    });
+    operations.push(Operation::Binary {
+        dst: cross_or_carry,
+        op: BinaryOp::BitOr,
+        lhs: ValueRef::Local(cross_nonzero),
+        rhs: ValueRef::Local(cross_carry2),
+    });
+    operations.push(Operation::Binary {
+        dst: overflow_dst,
+        op: BinaryOp::BitOr,
+        lhs: ValueRef::Local(high_or_carry),
+        rhs: ValueRef::Local(cross_or_carry),
+    });
+}
+
+fn append_signed_i64_mul_overflow_check(
+    state: &mut LoweringState,
+    operations: &mut Vec<Operation>,
+    lhs: ValueRef,
+    rhs: ValueRef,
+    overflow_dst: u32,
+) {
+    let zero_i64 = ValueRef::Integer {
+        ty: ScalarType::I64,
+        bits: 0,
+    };
+    let sign_shift = ValueRef::Integer {
+        ty: ScalarType::I64,
+        bits: 63,
+    };
+    let one_i1 = ValueRef::Integer {
+        ty: ScalarType::I1,
+        bits: 1,
+    };
+
+    let lhs_negative = state.allocate_temp(ScalarType::I1);
+    let rhs_negative = state.allocate_temp(ScalarType::I1);
+    let result_negative = state.allocate_temp(ScalarType::I1);
+    let result_positive = state.allocate_temp(ScalarType::I1);
+    let lhs_mask_i64 = state.allocate_temp(ScalarType::I64);
+    let rhs_mask_i64 = state.allocate_temp(ScalarType::I64);
+    let lhs_bits = state.allocate_temp(ScalarType::U64);
+    let rhs_bits = state.allocate_temp(ScalarType::U64);
+    let lhs_mask = state.allocate_temp(ScalarType::U64);
+    let rhs_mask = state.allocate_temp(ScalarType::U64);
+    let lhs_xored = state.allocate_temp(ScalarType::U64);
+    let rhs_xored = state.allocate_temp(ScalarType::U64);
+    let lhs_abs = state.allocate_temp(ScalarType::U64);
+    let rhs_abs = state.allocate_temp(ScalarType::U64);
+    let magnitude_product = state.allocate_temp(ScalarType::U64);
+    let unsigned_overflow = state.allocate_temp(ScalarType::I1);
+    let positive_limit_overflow = state.allocate_temp(ScalarType::I1);
+    let negative_limit_overflow = state.allocate_temp(ScalarType::I1);
+    let positive_overflow = state.allocate_temp(ScalarType::I1);
+    let negative_overflow = state.allocate_temp(ScalarType::I1);
+    let signed_limit_overflow = state.allocate_temp(ScalarType::I1);
+
+    operations.push(Operation::Compare {
+        dst: lhs_negative,
+        op: CompareOp::Slt,
+        lhs: lhs.clone(),
+        rhs: zero_i64.clone(),
+    });
+    operations.push(Operation::Compare {
+        dst: rhs_negative,
+        op: CompareOp::Slt,
+        lhs: rhs.clone(),
+        rhs: zero_i64.clone(),
+    });
+    operations.push(Operation::Binary {
+        dst: result_negative,
+        op: BinaryOp::BitXor,
+        lhs: ValueRef::Local(lhs_negative),
+        rhs: ValueRef::Local(rhs_negative),
+    });
+    operations.push(Operation::Binary {
+        dst: result_positive,
+        op: BinaryOp::BitXor,
+        lhs: ValueRef::Local(result_negative),
+        rhs: one_i1,
+    });
+    operations.push(Operation::Binary {
+        dst: lhs_mask_i64,
+        op: BinaryOp::AShr,
+        lhs: lhs.clone(),
+        rhs: sign_shift.clone(),
+    });
+    operations.push(Operation::Binary {
+        dst: rhs_mask_i64,
+        op: BinaryOp::AShr,
+        lhs: rhs.clone(),
+        rhs: sign_shift,
+    });
+    operations.push(Operation::Cast {
+        dst: lhs_bits,
+        op: CastOp::Bitcast,
+        src: lhs,
+        ty: ScalarType::U64,
+    });
+    operations.push(Operation::Cast {
+        dst: rhs_bits,
+        op: CastOp::Bitcast,
+        src: rhs,
+        ty: ScalarType::U64,
+    });
+    operations.push(Operation::Cast {
+        dst: lhs_mask,
+        op: CastOp::Bitcast,
+        src: ValueRef::Local(lhs_mask_i64),
+        ty: ScalarType::U64,
+    });
+    operations.push(Operation::Cast {
+        dst: rhs_mask,
+        op: CastOp::Bitcast,
+        src: ValueRef::Local(rhs_mask_i64),
+        ty: ScalarType::U64,
+    });
+    operations.push(Operation::Binary {
+        dst: lhs_xored,
+        op: BinaryOp::BitXor,
+        lhs: ValueRef::Local(lhs_bits),
+        rhs: ValueRef::Local(lhs_mask),
+    });
+    operations.push(Operation::Binary {
+        dst: rhs_xored,
+        op: BinaryOp::BitXor,
+        lhs: ValueRef::Local(rhs_bits),
+        rhs: ValueRef::Local(rhs_mask),
+    });
+    operations.push(Operation::Binary {
+        dst: lhs_abs,
+        op: BinaryOp::Sub,
+        lhs: ValueRef::Local(lhs_xored),
+        rhs: ValueRef::Local(lhs_mask),
+    });
+    operations.push(Operation::Binary {
+        dst: rhs_abs,
+        op: BinaryOp::Sub,
+        lhs: ValueRef::Local(rhs_xored),
+        rhs: ValueRef::Local(rhs_mask),
+    });
+    operations.push(Operation::Binary {
+        dst: magnitude_product,
+        op: BinaryOp::Mul,
+        lhs: ValueRef::Local(lhs_abs),
+        rhs: ValueRef::Local(rhs_abs),
+    });
+    append_unsigned_u64_mul_overflow_check(
+        state,
+        operations,
+        ValueRef::Local(lhs_abs),
+        ValueRef::Local(rhs_abs),
+        unsigned_overflow,
+    );
+    operations.push(Operation::Compare {
+        dst: positive_limit_overflow,
+        op: CompareOp::Ugt,
+        lhs: ValueRef::Local(magnitude_product),
+        rhs: ValueRef::Integer {
+            ty: ScalarType::U64,
+            bits: i64::MAX as u64,
+        },
+    });
+    operations.push(Operation::Compare {
+        dst: negative_limit_overflow,
+        op: CompareOp::Ugt,
+        lhs: ValueRef::Local(magnitude_product),
+        rhs: ValueRef::Integer {
+            ty: ScalarType::U64,
+            bits: 1_u64 << 63,
+        },
+    });
+    operations.push(Operation::Binary {
+        dst: positive_overflow,
+        op: BinaryOp::BitAnd,
+        lhs: ValueRef::Local(result_positive),
+        rhs: ValueRef::Local(positive_limit_overflow),
+    });
+    operations.push(Operation::Binary {
+        dst: negative_overflow,
+        op: BinaryOp::BitAnd,
+        lhs: ValueRef::Local(result_negative),
+        rhs: ValueRef::Local(negative_limit_overflow),
+    });
+    operations.push(Operation::Binary {
+        dst: signed_limit_overflow,
+        op: BinaryOp::BitOr,
+        lhs: ValueRef::Local(positive_overflow),
+        rhs: ValueRef::Local(negative_overflow),
+    });
+    operations.push(Operation::Binary {
+        dst: overflow_dst,
+        op: BinaryOp::BitOr,
+        lhs: ValueRef::Local(unsigned_overflow),
+        rhs: ValueRef::Local(signed_limit_overflow),
+    });
 }
 
 fn append_signed_overflow_check(

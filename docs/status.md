@@ -18,8 +18,8 @@ Baseline date: 2026-07-16.
   direct scalar function calls, scalar extern C calls, if/else CFG, MIR assert
   abort paths, signed/unsigned scalar integer `SwitchInt`/`match`,
   division/remainder, shifts, unary integer negation/bit-not, checked
-  add/sub/mul overflow tuple lowering, SCI object emission, native link, and
-  execution.
+  add/sub/mul overflow tuple lowering through 64-bit integers, SCI object
+  emission, native link, and execution.
 
 ## Bring-up Capability
 
@@ -31,7 +31,7 @@ Baseline date: 2026-07-16.
 | Function ABI | scalar integer C/Rust ABI with direct pass modes |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar function calls and direct scalar `extern "C"` calls with unreachable unwind |
-| MIR rvalues | `Use`, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
+| MIR rvalues | `Use`, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
 | Values | integer/bool locals and integer/bool constants |
 | SCI format | SA text generated from canonical plan |
 | Proof mode | `rust-trusted` |
@@ -42,8 +42,7 @@ Every missing capability is rejected before object publication.
 
 The full staged roadmap is tracked in `docs/implementation_plan_cn.md`.
 
-1. Indirect/ABI-rich calls, checked multiplication for 64-bit integers, and
-   wider scalar operation coverage.
+1. Indirect/ABI-rich calls and wider scalar operation coverage.
 2. Complete `TyAndLayout` and `FnAbi` serialization, aggregates, allocations,
    relocations, statics, and drop glue.
 3. SAB v5 in SCI and direct SAB emission.

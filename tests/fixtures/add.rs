@@ -41,6 +41,16 @@ pub extern "C" fn sci_mul_i32(a: i32, b: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_mul_i64(a: i64, b: i64) -> i64 {
+    a * b
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_mul_u64(a: u64, b: u64) -> u64 {
+    a * b
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_div_i32(a: i32, b: i32) -> i32 {
     a / b
 }

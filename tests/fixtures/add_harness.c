@@ -7,6 +7,8 @@ extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern int32_t sci_sub_i32(int32_t a, int32_t b);
 extern int32_t sci_mul_i32(int32_t a, int32_t b);
+extern int64_t sci_mul_i64(int64_t a, int64_t b);
+extern uint64_t sci_mul_u64(uint64_t a, uint64_t b);
 extern int32_t sci_div_i32(int32_t a, int32_t b);
 extern int32_t sci_rem_i32(int32_t a, int32_t b);
 extern int32_t sci_shl_i32(int32_t a, int32_t b);
@@ -47,6 +49,12 @@ int main(void) {
     }
     if (sci_mul_i32(6, 7) != 42) {
         return 8;
+    }
+    if (sci_mul_i64(3037000499LL, 3LL) != 9111001497LL) {
+        return 24;
+    }
+    if (sci_mul_u64(UINT64_C(4294967296), UINT64_C(10)) != UINT64_C(42949672960)) {
+        return 25;
     }
     if (sci_div_i32(84, 2) != 42) {
         return 9;
