@@ -1554,11 +1554,11 @@ fn scalar_type_for_ty(ty: Ty<'_>) -> Option<ScalarType> {
         ty::Int(ty::IntTy::I8) => Some(ScalarType::I8),
         ty::Int(ty::IntTy::I16) => Some(ScalarType::I16),
         ty::Int(ty::IntTy::I32) => Some(ScalarType::I32),
-        ty::Int(ty::IntTy::I64) => Some(ScalarType::I64),
+        ty::Int(ty::IntTy::I64 | ty::IntTy::Isize) => Some(ScalarType::I64),
         ty::Uint(ty::UintTy::U8) => Some(ScalarType::U8),
         ty::Uint(ty::UintTy::U16) => Some(ScalarType::U16),
         ty::Uint(ty::UintTy::U32) => Some(ScalarType::U32),
-        ty::Uint(ty::UintTy::U64) => Some(ScalarType::U64),
+        ty::Uint(ty::UintTy::U64 | ty::UintTy::Usize) => Some(ScalarType::U64),
         _ => None,
     }
 }
@@ -1583,7 +1583,8 @@ fn scalar_bit_width(ty: Ty<'_>) -> Option<u32> {
         ty::Int(ty::IntTy::I8) | ty::Uint(ty::UintTy::U8) => Some(8),
         ty::Int(ty::IntTy::I16) | ty::Uint(ty::UintTy::U16) => Some(16),
         ty::Int(ty::IntTy::I32) | ty::Uint(ty::UintTy::U32) => Some(32),
-        ty::Int(ty::IntTy::I64) | ty::Uint(ty::UintTy::U64) => Some(64),
+        ty::Int(ty::IntTy::I64 | ty::IntTy::Isize)
+        | ty::Uint(ty::UintTy::U64 | ty::UintTy::Usize) => Some(64),
         _ => None,
     }
 }

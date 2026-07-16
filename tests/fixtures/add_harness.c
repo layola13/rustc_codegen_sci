@@ -9,6 +9,9 @@ extern int32_t sci_sub_i32(int32_t a, int32_t b);
 extern int32_t sci_mul_i32(int32_t a, int32_t b);
 extern int64_t sci_mul_i64(int64_t a, int64_t b);
 extern uint64_t sci_mul_u64(uint64_t a, uint64_t b);
+extern uintptr_t sci_add_usize(uintptr_t a, uintptr_t b);
+extern uintptr_t sci_mul_usize(uintptr_t a, uintptr_t b);
+extern intptr_t sci_gt_isize(intptr_t a, intptr_t b);
 extern int32_t sci_div_i32(int32_t a, int32_t b);
 extern int32_t sci_rem_i32(int32_t a, int32_t b);
 extern int32_t sci_shl_i32(int32_t a, int32_t b);
@@ -55,6 +58,15 @@ int main(void) {
     }
     if (sci_mul_u64(UINT64_C(4294967296), UINT64_C(10)) != UINT64_C(42949672960)) {
         return 25;
+    }
+    if (sci_add_usize((uintptr_t)40, (uintptr_t)2) != (uintptr_t)42) {
+        return 26;
+    }
+    if (sci_mul_usize((uintptr_t)7, (uintptr_t)6) != (uintptr_t)42) {
+        return 27;
+    }
+    if (sci_gt_isize((intptr_t)-3, (intptr_t)-7) != (intptr_t)1) {
+        return 28;
     }
     if (sci_div_i32(84, 2) != 42) {
         return 9;

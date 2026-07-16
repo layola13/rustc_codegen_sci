@@ -13,11 +13,12 @@ The backend is pinned to:
 - SCI `0.0.4`
 
 The current bring-up slice supports `x86_64-unknown-linux-gnu`, `panic=abort`,
-`no_std`, scalar integer function signatures, straight-line MIR assignments,
-scalar integer arithmetic, signed/unsigned comparisons, integer casts, direct
-scalar function calls, scalar `extern "C"` calls, MIR assert abort paths,
-division/remainder, shifts, unary integer negation/bit-not, multi-block bool
-branch CFG, and scalar integer `SwitchInt`/`match` lowered through
+`no_std`, scalar integer function signatures including `isize`/`usize`,
+straight-line MIR assignments, scalar integer arithmetic, signed/unsigned
+comparisons, integer casts, direct scalar function calls, scalar `extern "C"`
+calls, MIR assert abort paths, division/remainder, shifts, unary integer
+negation/bit-not, multi-block bool branch CFG, and scalar integer
+`SwitchInt`/`match` lowered through
 worker-generated compare chains. With overflow checks enabled, checked integer
 add/sub/mul are lowered through synthetic `(value, overflow)` tuple fields
 before MIR `Assert`; checked mul is supported for integer widths up to 64

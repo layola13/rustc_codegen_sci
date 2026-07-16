@@ -15,11 +15,11 @@ Baseline date: 2026-07-16.
 - Rustc CGU traversal, MIR lowering, worker invocation, and object artifact
   return to rustc's normal output pipeline.
 - Smoke coverage for scalar addition, signed comparison, bool-to-int cast,
-  direct scalar function calls, scalar extern C calls, if/else CFG, MIR assert
-  abort paths, signed/unsigned scalar integer `SwitchInt`/`match`,
-  division/remainder, shifts, unary integer negation/bit-not, checked
-  add/sub/mul overflow tuple lowering through 64-bit integers, SCI object
-  emission, native link, and execution.
+  `isize`/`usize`, direct scalar function calls, scalar extern C calls, if/else
+  CFG, MIR assert abort paths, signed/unsigned scalar integer
+  `SwitchInt`/`match`, division/remainder, shifts, unary integer
+  negation/bit-not, checked add/sub/mul overflow tuple lowering through 64-bit
+  integers, SCI object emission, native link, and execution.
 
 ## Bring-up Capability
 
@@ -28,11 +28,11 @@ Baseline date: 2026-07-16.
 | Target | `x86_64-unknown-linux-gnu` |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
-| Function ABI | scalar integer C/Rust ABI with direct pass modes |
+| Function ABI | scalar integer C/Rust ABI with direct pass modes, including `isize`/`usize` on 64-bit targets |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar function calls and direct scalar `extern "C"` calls with unreachable unwind |
 | MIR rvalues | `Use`, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
-| Values | integer/bool locals and integer/bool constants |
+| Values | integer/bool locals and integer/bool constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |
 | Proof mode | `rust-trusted` |
 

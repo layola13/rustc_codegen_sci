@@ -51,6 +51,21 @@ pub extern "C" fn sci_mul_u64(a: u64, b: u64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_add_usize(a: usize, b: usize) -> usize {
+    a + b
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_mul_usize(a: usize, b: usize) -> usize {
+    a * b
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_gt_isize(a: isize, b: isize) -> isize {
+    (a > b) as isize
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_div_i32(a: i32, b: i32) -> i32 {
     a / b
 }
