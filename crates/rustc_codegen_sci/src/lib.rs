@@ -21,8 +21,8 @@ use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind, TargetConfig};
 use rustc_middle::dep_graph::WorkProductMap;
 use rustc_middle::mir::{
-    BasicBlock, BinOp, Body, ConstOperand, Local, Operand, Place, ProjectionElem, Rvalue,
-    StatementKind, TerminatorKind, UnOp, UnwindAction,
+    AggregateKind, BasicBlock, BinOp, Body, ConstOperand, Local, Operand, Place, ProjectionElem,
+    Rvalue, StatementKind, TerminatorKind, UnOp, UnwindAction,
 };
 use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{self, Instance, Ty, TyCtxt};
@@ -261,17 +261,23 @@ fn lower_function<'tcx>(
                     tcx.symbol_name(instance).name
                 ));
             }
-        } else if let Some((value_ty, overflow_ty)) = checked_tuple_types(ty) {
-            let value_id = state.synthetic_tuple_field(local, 0);
-            let overflow_id = state.synthetic_tuple_field(local, 1);
-            locals.push(LocalPlan {
-                id: value_id,
-                ty: value_ty,
-            });
-            locals.push(LocalPlan {
-                id: overflow_id,
-                ty: overflow_ty,
-            });
+        } else if let Some(field_types) = scalar_tuple_types(ty) {
+            if local == rustc_middle::mir::RETURN_PLACE {
+                return Err(format!(
+                    "{}: tuple return ABI is not yet supported",
+                    tcx.symbol_name(instance).name
+                ));
+            }
+            if local.index() != 0 && local.index() <= mir.arg_count {
+                return Err(format!(
+                    "{}: tuple argument ABI is not yet supported",
+                    tcx.symbol_name(instance).name
+                ));
+            }
+            for (field, ty) in field_types.into_iter().enumerate() {
+                let id = state.synthetic_tuple_field(local, field);
+                locals.push(LocalPlan { id, ty });
+            }
         } else {
             return Err(format!(
                 "{}: local {:?} has unsupported type `{}`",
@@ -671,8 +677,86 @@ fn lower_assignment<'tcx>(
         );
     }
 
+    if scalar_tuple_types(place_ty).is_some() {
+        return lower_tuple_assignment(tcx, instance, mir, state, place, rvalue);
+    }
+
     let dst = lower_destination(state, place)?;
     Ok(vec![lower_rvalue(tcx, instance, mir, state, dst, rvalue)?])
+}
+
+fn lower_tuple_assignment<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    state: &LoweringState,
+    place: Place<'tcx>,
+    rvalue: &Rvalue<'tcx>,
+) -> Result<Vec<Operation>, String> {
+    if !place.projection.is_empty() {
+        return Err(format!(
+            "{}: tuple aggregate destination must be an unprojected local",
+            tcx.symbol_name(instance).name
+        ));
+    }
+    let Rvalue::Aggregate(kind, operands) = rvalue else {
+        return Err(format!(
+            "{}: tuple assignment only supports aggregate rvalues, got `{rvalue:?}`",
+            tcx.symbol_name(instance).name
+        ));
+    };
+    if !matches!(**kind, AggregateKind::Tuple) {
+        return Err(format!(
+            "{}: only tuple aggregate rvalues are currently supported",
+            tcx.symbol_name(instance).name
+        ));
+    }
+    let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
+    let field_types = scalar_tuple_types(place_ty).ok_or_else(|| {
+        format!(
+            "{}: tuple aggregate destination has unsupported type `{}`",
+            tcx.symbol_name(instance).name,
+            place_ty
+        )
+    })?;
+    if operands.len() != field_types.len() {
+        return Err(format!(
+            "{}: tuple aggregate has {} operands for {} fields",
+            tcx.symbol_name(instance).name,
+            operands.len(),
+            field_types.len()
+        ));
+    }
+    operands
+        .iter()
+        .enumerate()
+        .map(|(field, operand)| {
+            let dst = state.tuple_field(place.local, field).ok_or_else(|| {
+                format!(
+                    "{}: tuple field {field} is missing a synthetic local",
+                    tcx.symbol_name(instance).name
+                )
+            })?;
+            let operand_ty = monomorphize_ty(tcx, instance, operand.ty(&mir.local_decls, tcx));
+            let operand_scalar = scalar_type_for_ty(operand_ty).ok_or_else(|| {
+                format!(
+                    "{}: tuple field {field} has unsupported operand type `{}`",
+                    tcx.symbol_name(instance).name,
+                    operand_ty
+                )
+            })?;
+            if operand_scalar != field_types[field] {
+                return Err(format!(
+                    "{}: tuple field {field} type mismatch",
+                    tcx.symbol_name(instance).name
+                ));
+            }
+            Ok(Operation::Copy {
+                dst,
+                src: lower_operand(tcx, instance, mir, state, operand)?,
+            })
+        })
+        .collect()
 }
 
 fn lower_rvalue<'tcx>(
@@ -1621,18 +1705,14 @@ fn is_unit_ty(ty: Ty<'_>) -> bool {
     matches!(ty.kind(), ty::Tuple(fields) if fields.is_empty())
 }
 
-fn checked_tuple_types(ty: Ty<'_>) -> Option<(ScalarType, ScalarType)> {
+fn scalar_tuple_types(ty: Ty<'_>) -> Option<Vec<ScalarType>> {
     let ty::Tuple(fields) = ty.kind() else {
         return None;
     };
-    if fields.len() != 2 {
+    if fields.is_empty() {
         return None;
     }
-    let value_ty = scalar_type_for_ty(fields[0])?;
-    if scalar_type_for_ty(fields[1]) != Some(ScalarType::I1) {
-        return None;
-    }
-    Some((value_ty, ScalarType::I1))
+    fields.iter().map(scalar_type_for_ty).collect()
 }
 
 fn scalar_bit_width(ty: Ty<'_>) -> Option<u32> {

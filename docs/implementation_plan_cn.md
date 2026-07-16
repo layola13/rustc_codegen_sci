@@ -214,13 +214,14 @@ WASM 不应在 M0 前做，因为当前 SCI native emitter 不能再依赖 host 
 ## 立即执行顺序
 
 1. 已完成 `Assert`、div/rem/shift/unary、multi-way switch、checked add/sub/mul 覆盖到 64 位整数和 smoke 扩展。
-2. 已升级到 `PLAN_VERSION = 4`，包含 target-qualified header 与模块级 extern function plan。
+2. 已升级到 `PLAN_VERSION = 5`，包含 target-qualified header、模块级 extern function plan、void return/call plan。
 3. 当前增量已完成直接标量/void `extern "C"` 调用；下一步做 20-30 个 ABI fixture，优先 Direct/Pair/Cast/Indirect/sret/byval。
-4. 做 static allocation/relocation 最小闭环，支持字符串与 panic metadata。
-5. 引入 direct SAB no-fallback 路径，与 SA text parity。
-6. 做 proof-aware manifest/cache，不让 stock rustc work-product 路径独自决定复用。
-7. 再进入 aggregate/drop/borrow/fat pointer。
-8. 最后推进 Cargo、sysroot、WASM 和 strict proof。
+4. 已完成函数内部 local scalar tuple 的构造与 field projection；tuple 参数/返回 ABI 仍保持 hard error。
+5. 做 static allocation/relocation 最小闭环，支持字符串与 panic metadata。
+6. 引入 direct SAB no-fallback 路径，与 SA text parity。
+7. 做 proof-aware manifest/cache，不让 stock rustc work-product 路径独自决定复用。
+8. 再进入 aggregate/drop/borrow/fat pointer。
+9. 最后推进 Cargo、sysroot、WASM 和 strict proof。
 
 ## SLA/SAB 参考实现借鉴
 

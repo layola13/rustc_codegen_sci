@@ -22,6 +22,12 @@ pub extern "C" fn sci_max_i32(a: i32, b: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_tuple_sum_i32(a: i32, b: i32) -> i32 {
+    let pair = (a, b);
+    pair.0 + pair.1
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_call_add_i32(a: i32, b: i32) -> i32 {
     sci_add_i32(a, b)
 }
