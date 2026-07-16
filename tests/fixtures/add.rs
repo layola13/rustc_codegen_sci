@@ -1,5 +1,9 @@
 #![no_std]
 
+unsafe extern "C" {
+    fn sci_host_add_i32(a: i32, b: i32) -> i32;
+}
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn sci_add_i32(a: i32, b: i32) -> i32 {
@@ -19,6 +23,11 @@ pub extern "C" fn sci_max_i32(a: i32, b: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sci_call_add_i32(a: i32, b: i32) -> i32 {
     sci_add_i32(a, b)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_call_host_add_i32(a: i32, b: i32) -> i32 {
+    unsafe { sci_host_add_i32(a, b) }
 }
 
 #[unsafe(no_mangle)]

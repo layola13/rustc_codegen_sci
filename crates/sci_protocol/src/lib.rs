@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 1;
-pub const PLAN_VERSION: u16 = 3;
+pub const PLAN_VERSION: u16 = 4;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -181,6 +181,13 @@ pub struct FunctionPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternFunctionPlan {
+    pub symbol: String,
+    pub argument_types: Vec<ScalarType>,
+    pub return_type: ScalarType,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BasicBlockPlan {
     pub id: u32,
     pub operations: Vec<Operation>,
@@ -236,6 +243,7 @@ pub struct SciModulePlan {
     pub rustc_commit: String,
     pub target: TargetPlan,
     pub cgu_name: String,
+    pub extern_functions: Vec<ExternFunctionPlan>,
     pub functions: Vec<FunctionPlan>,
 }
 
@@ -633,6 +641,24 @@ impl WireDecode for FunctionPlan {
     }
 }
 
+impl WireEncode for ExternFunctionPlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.string(&self.symbol)?;
+        encoder.vec(&self.argument_types)?;
+        self.return_type.encode(encoder)
+    }
+}
+
+impl WireDecode for ExternFunctionPlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            symbol: decoder.string()?,
+            argument_types: decoder.vec()?,
+            return_type: ScalarType::decode(decoder)?,
+        })
+    }
+}
+
 impl WireEncode for BasicBlockPlan {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.u32(self.id);
@@ -795,6 +821,7 @@ impl WireEncode for SciModulePlan {
         encoder.string(&self.rustc_commit)?;
         self.target.encode(encoder)?;
         encoder.string(&self.cgu_name)?;
+        encoder.vec(&self.extern_functions)?;
         encoder.vec(&self.functions)
     }
 }
@@ -810,6 +837,7 @@ impl WireDecode for SciModulePlan {
             rustc_commit: decoder.string()?,
             target: TargetPlan::decode(decoder)?,
             cgu_name: decoder.string()?,
+            extern_functions: decoder.vec()?,
             functions: decoder.vec()?,
         })
     }
@@ -942,6 +970,11 @@ mod tests {
                     endian: Endian::Little,
                 },
                 cgu_name: "add".into(),
+                extern_functions: vec![ExternFunctionPlan {
+                    symbol: "host_add_i32".into(),
+                    argument_types: vec![ScalarType::I32, ScalarType::I32],
+                    return_type: ScalarType::I32,
+                }],
                 functions: vec![FunctionPlan {
                     symbol: "add_i32".into(),
                     argument_locals: vec![1, 2],

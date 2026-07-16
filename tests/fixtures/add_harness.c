@@ -4,6 +4,7 @@ extern int32_t sci_add_i32(int32_t a, int32_t b);
 extern int32_t sci_gt_i32(int32_t a, int32_t b);
 extern int32_t sci_max_i32(int32_t a, int32_t b);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
+extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern int32_t sci_sub_i32(int32_t a, int32_t b);
 extern int32_t sci_mul_i32(int32_t a, int32_t b);
 extern int32_t sci_div_i32(int32_t a, int32_t b);
@@ -13,6 +14,10 @@ extern int32_t sci_shr_i32(int32_t a, int32_t b);
 extern int32_t sci_neg_i32(int32_t a);
 extern int32_t sci_not_i32(int32_t a);
 extern int32_t sci_match_u32(uint32_t a);
+
+int32_t sci_host_add_i32(int32_t a, int32_t b) {
+    return a + b;
+}
 
 int main(void) {
     if (sci_add_i32(20, 22) != 42) {
@@ -32,6 +37,9 @@ int main(void) {
     }
     if (sci_call_add_i32(11, 31) != 42) {
         return 6;
+    }
+    if (sci_call_host_add_i32(20, 22) != 42) {
+        return 19;
     }
     if (sci_sub_i32(50, 8) != 42) {
         return 7;

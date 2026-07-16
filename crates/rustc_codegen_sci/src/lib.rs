@@ -15,7 +15,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use rustc_abi::Endian as RustcEndian;
+use rustc_abi::{Endian as RustcEndian, ExternAbi};
 use rustc_codegen_ssa::back::write::produce_final_output_artifacts;
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind, TargetConfig};
@@ -32,8 +32,8 @@ use rustc_span::Symbol;
 use rustc_target::spec::PanicStrategy;
 use sci_protocol::{
     BasicBlockPlan, BinaryOp, CastOp, CompareOp, CompileRequest, CompileResponse, Endian,
-    FunctionPlan, LocalPlan, Operation, PLAN_VERSION, ScalarType, SciModulePlan, SwitchCasePlan,
-    TargetPlan, TerminatorPlan, ValueRef, read_frame, write_frame,
+    ExternFunctionPlan, FunctionPlan, LocalPlan, Operation, PLAN_VERSION, ScalarType,
+    SciModulePlan, SwitchCasePlan, TargetPlan, TerminatorPlan, ValueRef, read_frame, write_frame,
 };
 
 const BACKEND_NAME: &str = "sci";
@@ -140,11 +140,12 @@ fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
         let cgu_name = cgu.name().as_str().to_owned();
         let object_path = outputs.temp_path_for_cgu(OutputType::Object, &cgu_name);
         let mut functions = Vec::new();
+        let mut module_state = ModuleLoweringState::default();
 
         for (mono_item, _item_data) in cgu.items_in_deterministic_order(tcx) {
             match mono_item {
                 MonoItem::Fn(instance) => {
-                    functions.push(lower_function(tcx, instance)?);
+                    functions.push(lower_function(tcx, instance, &mut module_state)?);
                 }
                 MonoItem::Static(def_id) => {
                     return Err(format!(
@@ -180,6 +181,7 @@ fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
                 },
             },
             cgu_name: cgu_name.clone(),
+            extern_functions: module_state.extern_functions.into_values().collect(),
             functions,
         };
 
@@ -211,9 +213,35 @@ fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
     })
 }
 
+#[derive(Default)]
+struct ModuleLoweringState {
+    extern_functions: BTreeMap<String, ExternFunctionPlan>,
+}
+
+impl ModuleLoweringState {
+    fn register_extern_function(
+        &mut self,
+        extern_function: ExternFunctionPlan,
+    ) -> Result<(), String> {
+        if let Some(existing) = self.extern_functions.get(&extern_function.symbol) {
+            if existing != &extern_function {
+                return Err(format!(
+                    "extern function `{}` is referenced with incompatible signatures",
+                    extern_function.symbol
+                ));
+            }
+            return Ok(());
+        }
+        self.extern_functions
+            .insert(extern_function.symbol.clone(), extern_function);
+        Ok(())
+    }
+}
+
 fn lower_function<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
+    module_state: &mut ModuleLoweringState,
 ) -> Result<FunctionPlan, String> {
     let mir = tcx.instance_mir(instance.def);
 
@@ -277,7 +305,14 @@ fn lower_function<'tcx>(
         blocks.push(BasicBlockPlan {
             id: block_id_id(block_id),
             operations,
-            terminator: lower_terminator(tcx, instance, mir, &state, &block.terminator().kind)?,
+            terminator: lower_terminator(
+                tcx,
+                instance,
+                mir,
+                &state,
+                module_state,
+                &block.terminator().kind,
+            )?,
         });
     }
 
@@ -343,6 +378,7 @@ fn lower_terminator<'tcx>(
     instance: Instance<'tcx>,
     mir: &Body<'tcx>,
     state: &LoweringState,
+    module_state: &mut ModuleLoweringState,
     terminator: &TerminatorKind<'tcx>,
 ) -> Result<TerminatorPlan, String> {
     match terminator {
@@ -418,12 +454,24 @@ fn lower_terminator<'tcx>(
                 )
             })?;
             let callee = lower_direct_callee(tcx, instance, func)?;
+            let callee_symbol = tcx.symbol_name(callee).name.to_string();
             let args = args
                 .iter()
                 .map(|arg| lower_operand(tcx, instance, mir, state, &arg.node))
                 .collect::<Result<Vec<_>, _>>()?;
+            if tcx.is_foreign_item(callee.def_id()) {
+                module_state.register_extern_function(lower_extern_function(
+                    tcx,
+                    instance,
+                    callee,
+                    mir,
+                    func,
+                    args.len(),
+                    destination,
+                )?)?;
+            }
             Ok(TerminatorPlan::Call {
-                callee,
+                callee: callee_symbol,
                 args,
                 destination: lower_destination(state, *destination)?,
                 target: block_id_id(target),
@@ -460,7 +508,7 @@ fn lower_direct_callee<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: Instance<'tcx>,
     func: &Operand<'tcx>,
-) -> Result<String, String> {
+) -> Result<Instance<'tcx>, String> {
     let (def_id, args) = func.const_fn_def().ok_or_else(|| {
         format!(
             "{}: only direct function calls are currently supported",
@@ -476,7 +524,87 @@ fn lower_direct_callee<'tcx>(
                     tcx.def_path_str(def_id)
                 )
             })?;
-    Ok(tcx.symbol_name(callee).name.to_string())
+    Ok(callee)
+}
+
+fn lower_extern_function<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: Instance<'tcx>,
+    callee: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    func: &Operand<'tcx>,
+    lowered_arg_count: usize,
+    destination: &Place<'tcx>,
+) -> Result<ExternFunctionPlan, String> {
+    let (def_id, args) = func.const_fn_def().ok_or_else(|| {
+        format!(
+            "{}: only direct extern function calls are currently supported",
+            tcx.symbol_name(caller).name
+        )
+    })?;
+    let sig = tcx.fn_sig(def_id).instantiate(tcx, args).skip_norm_wip();
+    if !matches!(sig.abi(), ExternAbi::C { unwind: false }) {
+        return Err(format!(
+            "{}: extern callee `{}` uses unsupported ABI {}",
+            tcx.symbol_name(caller).name,
+            tcx.def_path_str(callee.def_id()),
+            sig.abi()
+        ));
+    }
+    if sig.c_variadic() {
+        return Err(format!(
+            "{}: variadic extern callee `{}` is not supported",
+            tcx.symbol_name(caller).name,
+            tcx.def_path_str(callee.def_id())
+        ));
+    }
+    let signature_inputs = sig.inputs().skip_binder();
+    let signature_input_count = signature_inputs.len();
+    if lowered_arg_count != signature_input_count {
+        return Err(format!(
+            "{}: extern callee `{}` lowered with {lowered_arg_count} args, expected {signature_input_count}",
+            tcx.symbol_name(caller).name,
+            tcx.def_path_str(callee.def_id())
+        ));
+    }
+
+    let mut argument_types = Vec::with_capacity(signature_input_count);
+    for input in signature_inputs {
+        let ty = monomorphize_ty(tcx, caller, *input);
+        let scalar = scalar_type_for_ty(ty).ok_or_else(|| {
+            format!(
+                "{}: extern callee `{}` argument has unsupported type `{}`",
+                tcx.symbol_name(caller).name,
+                tcx.def_path_str(callee.def_id()),
+                ty
+            )
+        })?;
+        argument_types.push(scalar);
+    }
+
+    let return_ty = monomorphize_ty(tcx, caller, destination.ty(&mir.local_decls, tcx).ty);
+    let return_type = scalar_type_for_ty(return_ty).ok_or_else(|| {
+        format!(
+            "{}: extern callee `{}` return destination has unsupported type `{}`",
+            tcx.symbol_name(caller).name,
+            tcx.def_path_str(callee.def_id()),
+            return_ty
+        )
+    })?;
+    let sig_return_ty = monomorphize_ty(tcx, caller, sig.output().skip_binder());
+    if scalar_type_for_ty(sig_return_ty) != Some(return_type) {
+        return Err(format!(
+            "{}: extern callee `{}` return type does not match destination",
+            tcx.symbol_name(caller).name,
+            tcx.def_path_str(callee.def_id())
+        ));
+    }
+
+    Ok(ExternFunctionPlan {
+        symbol: tcx.symbol_name(callee).name.to_string(),
+        argument_types,
+        return_type,
+    })
 }
 
 fn lower_assignment<'tcx>(

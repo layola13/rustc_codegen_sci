@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use sci_protocol::{
-    BasicBlockPlan, CompileRequest, CompileResponse, FunctionPlan, Operation, PLAN_VERSION,
-    ScalarType, SciModulePlan, SwitchCasePlan, TerminatorPlan, ValueRef, read_frame, write_frame,
+    BasicBlockPlan, CompileRequest, CompileResponse, ExternFunctionPlan, FunctionPlan, Operation,
+    PLAN_VERSION, ScalarType, SciModulePlan, SwitchCasePlan, TerminatorPlan, ValueRef, read_frame,
+    write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
@@ -134,8 +135,61 @@ fn validate_module(module: &SciModulePlan) -> Result<(), String> {
     if functions.len() != module.functions.len() {
         return Err("module contains duplicate function symbols".into());
     }
+    let extern_functions: BTreeMap<&str, &ExternFunctionPlan> = module
+        .extern_functions
+        .iter()
+        .map(|function| (function.symbol.as_str(), function))
+        .collect();
+    if extern_functions.len() != module.extern_functions.len() {
+        return Err("module contains duplicate extern function symbols".into());
+    }
+    for extern_function in &module.extern_functions {
+        validate_extern_function(extern_function)?;
+        if functions.contains_key(extern_function.symbol.as_str()) {
+            return Err(format!(
+                "extern function `{}` duplicates a defined function",
+                extern_function.symbol
+            ));
+        }
+    }
     for function in &module.functions {
-        validate_function(function, &functions)?;
+        validate_function(function, &functions, &extern_functions)?;
+    }
+    Ok(())
+}
+
+fn validate_symbol(kind: &str, symbol: &str) -> Result<(), String> {
+    if symbol.is_empty() {
+        return Err(format!("{kind} symbol is empty"));
+    }
+    if !symbol
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$'))
+    {
+        return Err(format!(
+            "{kind} symbol contains unsupported SA characters: {symbol}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_extern_function(function: &ExternFunctionPlan) -> Result<(), String> {
+    validate_symbol("extern function", &function.symbol)?;
+    if function
+        .argument_types
+        .iter()
+        .any(|ty| *ty == ScalarType::I1)
+    {
+        return Err(format!(
+            "extern function {} uses unsupported i1 ABI argument",
+            function.symbol
+        ));
+    }
+    if function.return_type == ScalarType::I1 {
+        return Err(format!(
+            "extern function {} uses unsupported i1 ABI return",
+            function.symbol
+        ));
     }
     Ok(())
 }
@@ -143,20 +197,9 @@ fn validate_module(module: &SciModulePlan) -> Result<(), String> {
 fn validate_function(
     function: &FunctionPlan,
     functions: &BTreeMap<&str, &FunctionPlan>,
+    extern_functions: &BTreeMap<&str, &ExternFunctionPlan>,
 ) -> Result<(), String> {
-    if function.symbol.is_empty() {
-        return Err("function symbol is empty".into());
-    }
-    if !function
-        .symbol
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$'))
-    {
-        return Err(format!(
-            "function symbol contains unsupported SA characters: {}",
-            function.symbol
-        ));
-    }
+    validate_symbol("function", &function.symbol)?;
 
     let locals: BTreeMap<u32, ScalarType> = function
         .locals
@@ -209,7 +252,14 @@ fn validate_function(
         for operation in &block.operations {
             validate_operation(function, &locals, &mut defined, operation)?;
         }
-        validate_terminator(function, functions, &locals, &defined, &block.terminator)?;
+        validate_terminator(
+            function,
+            functions,
+            extern_functions,
+            &locals,
+            &defined,
+            &block.terminator,
+        )?;
     }
     Ok(())
 }
@@ -344,6 +394,7 @@ fn validate_operation(
 fn validate_terminator(
     function: &FunctionPlan,
     functions: &BTreeMap<&str, &FunctionPlan>,
+    extern_functions: &BTreeMap<&str, &ExternFunctionPlan>,
     locals: &BTreeMap<u32, ScalarType>,
     defined: &BTreeSet<u32>,
     terminator: &TerminatorPlan,
@@ -406,37 +457,65 @@ fn validate_terminator(
             destination,
             ..
         } => {
-            let callee = functions
+            if let Some(callee_function) = functions.get(callee.as_str()) {
+                if args.len() != callee_function.argument_locals.len() {
+                    return Err(format!(
+                        "{} call to {} has {} args, expected {}",
+                        function.symbol,
+                        callee_function.symbol,
+                        args.len(),
+                        callee_function.argument_locals.len()
+                    ));
+                }
+                let callee_locals: BTreeMap<u32, ScalarType> = callee_function
+                    .locals
+                    .iter()
+                    .map(|local| (local.id, local.ty))
+                    .collect();
+                for (arg, callee_local) in args.iter().zip(&callee_function.argument_locals) {
+                    validate_value(locals, defined, arg)?;
+                    if value_type(locals, arg)? != callee_locals[callee_local] {
+                        return Err(format!(
+                            "{} call to {} has argument type mismatch",
+                            function.symbol, callee_function.symbol
+                        ));
+                    }
+                }
+                validate_destination(locals, *destination)?;
+                if locals[destination] != callee_locals[&callee_function.return_local] {
+                    return Err(format!(
+                        "{} call to {} has return type mismatch",
+                        function.symbol, callee_function.symbol
+                    ));
+                }
+                return Ok(());
+            }
+            let extern_function = extern_functions
                 .get(callee.as_str())
                 .ok_or_else(|| format!("{} calls missing callee `{callee}`", function.symbol))?;
-            if args.len() != callee.argument_locals.len() {
+            if args.len() != extern_function.argument_types.len() {
                 return Err(format!(
                     "{} call to {} has {} args, expected {}",
                     function.symbol,
-                    callee.symbol,
+                    extern_function.symbol,
                     args.len(),
-                    callee.argument_locals.len()
+                    extern_function.argument_types.len()
                 ));
             }
-            let callee_locals: BTreeMap<u32, ScalarType> = callee
-                .locals
-                .iter()
-                .map(|local| (local.id, local.ty))
-                .collect();
-            for (arg, callee_local) in args.iter().zip(&callee.argument_locals) {
+            for (arg, expected_ty) in args.iter().zip(&extern_function.argument_types) {
                 validate_value(locals, defined, arg)?;
-                if value_type(locals, arg)? != callee_locals[callee_local] {
+                if value_type(locals, arg)? != *expected_ty {
                     return Err(format!(
                         "{} call to {} has argument type mismatch",
-                        function.symbol, callee.symbol
+                        function.symbol, extern_function.symbol
                     ));
                 }
             }
             validate_destination(locals, *destination)?;
-            if locals[destination] != callee_locals[&callee.return_local] {
+            if locals[destination] != extern_function.return_type {
                 return Err(format!(
                     "{} call to {} has return type mismatch",
-                    function.symbol, callee.symbol
+                    function.symbol, extern_function.symbol
                 ));
             }
         }
@@ -532,11 +611,32 @@ fn emit_sa(module: &SciModulePlan) -> Result<String, String> {
         "// rustc={} target={} cgu={}\n\n",
         module.rustc_commit, module.target.triple, module.cgu_name
     ));
+    for function in &module.extern_functions {
+        emit_extern_function(&mut out, function);
+    }
+    if !module.extern_functions.is_empty() {
+        out.push('\n');
+    }
     for function in &module.functions {
         emit_function(&mut out, function)?;
         out.push('\n');
     }
     Ok(out)
+}
+
+fn emit_extern_function(out: &mut String, function: &ExternFunctionPlan) {
+    out.push_str("@extern ");
+    out.push_str(&function.symbol);
+    out.push('(');
+    for (index, ty) in function.argument_types.iter().enumerate() {
+        if index != 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&format!("arg{index}: {}", ty.sa_name()));
+    }
+    out.push_str(") -> ");
+    out.push_str(function.return_type.sa_name());
+    out.push('\n');
 }
 
 fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String> {
