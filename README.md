@@ -24,9 +24,10 @@ add/sub/mul are lowered through synthetic `(value, overflow)` tuple fields
 before MIR `Assert`; checked mul is supported for integer widths up to 64
 bits. Local scalar tuples and structs can be constructed and read through
 field projection, and local scalar aggregate copy/move is lowered field by
-field; aggregate argument/return ABI is still rejected. Unsupported targets,
-ABIs, MIR operations, and features are hard errors. There is no LLVM-backend or
-`bc2sa` fallback.
+field. Function-internal empty struct ZST locals are ignored as no-op values;
+aggregate and ZST struct argument/return ABI is still rejected. Unsupported
+targets, ABIs, MIR operations, and features are hard errors. There is no
+LLVM-backend or `bc2sa` fallback.
 
 Build and run the focused smoke gate:
 

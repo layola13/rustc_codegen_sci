@@ -261,6 +261,15 @@ fn lower_function<'tcx>(
                     tcx.symbol_name(instance).name
                 ));
             }
+        } else if is_empty_struct_ty(ty) {
+            if local == rustc_middle::mir::RETURN_PLACE
+                || local.index() != 0 && local.index() <= mir.arg_count
+            {
+                return Err(format!(
+                    "{}: zero-sized struct function ABI is not yet supported",
+                    tcx.symbol_name(instance).name
+                ));
+            }
         } else if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
             if local == rustc_middle::mir::RETURN_PLACE {
                 return Err(format!(
@@ -656,7 +665,7 @@ fn lower_assignment<'tcx>(
     rvalue: &Rvalue<'tcx>,
 ) -> Result<Vec<Operation>, String> {
     let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
-    if is_unit_ty(place_ty) {
+    if is_unit_ty(place_ty) || is_empty_struct_ty(place_ty) {
         return Ok(Vec::new());
     }
 
@@ -1788,6 +1797,13 @@ fn scalar_type_for_ty(ty: Ty<'_>) -> Option<ScalarType> {
 
 fn is_unit_ty(ty: Ty<'_>) -> bool {
     matches!(ty.kind(), ty::Tuple(fields) if fields.is_empty())
+}
+
+fn is_empty_struct_ty(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        ty::Adt(adt_def, _) => adt_def.is_struct() && adt_def.non_enum_variant().fields.is_empty(),
+        _ => false,
+    }
 }
 
 fn scalar_aggregate_field_types<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Vec<ScalarType>> {

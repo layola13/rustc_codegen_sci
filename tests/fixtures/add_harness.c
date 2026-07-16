@@ -7,6 +7,7 @@ extern int32_t sci_tuple_sum_i32(int32_t a, int32_t b);
 extern int32_t sci_tuple_copy_sum_i32(int32_t a, int32_t b);
 extern int32_t sci_struct_sum_i32(int32_t a, int32_t b);
 extern int32_t sci_struct_copy_sum_i32(int32_t a, int32_t b);
+extern int32_t sci_empty_struct_local_i32(int32_t a, int32_t b);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern void sci_unit_noop(int32_t a);
@@ -65,6 +66,9 @@ int main(void) {
     }
     if (sci_struct_copy_sum_i32(16, 26) != 42) {
         return 35;
+    }
+    if (sci_empty_struct_local_i32(15, 27) != 42) {
+        return 36;
     }
     if (sci_call_add_i32(11, 31) != 42) {
         return 6;

@@ -10,6 +10,8 @@ struct ScalarPair {
     right: i32,
 }
 
+struct EmptyMarker;
+
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn sci_add_i32(a: i32, b: i32) -> i32 {
@@ -50,6 +52,12 @@ pub extern "C" fn sci_struct_copy_sum_i32(a: i32, b: i32) -> i32 {
     let pair = ScalarPair { left: a, right: b };
     let copy = pair;
     copy.left + copy.right
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_empty_struct_local_i32(a: i32, b: i32) -> i32 {
+    let _marker = EmptyMarker;
+    a + b
 }
 
 #[unsafe(no_mangle)]
