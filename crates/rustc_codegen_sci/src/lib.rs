@@ -699,22 +699,6 @@ fn lower_aggregate_assignment<'tcx>(
             tcx.symbol_name(instance).name
         ));
     }
-    let Rvalue::Aggregate(kind, operands) = rvalue else {
-        return Err(format!(
-            "{}: aggregate assignment only supports aggregate rvalues, got `{rvalue:?}`",
-            tcx.symbol_name(instance).name
-        ));
-    };
-    match **kind {
-        AggregateKind::Tuple => {}
-        AggregateKind::Adt(def_id, ..) if tcx.adt_def(def_id).is_struct() => {}
-        _ => {
-            return Err(format!(
-                "{}: only tuple and struct aggregate rvalues are currently supported",
-                tcx.symbol_name(instance).name
-            ));
-        }
-    }
     let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
     let field_types = scalar_aggregate_field_types(tcx, place_ty).ok_or_else(|| {
         format!(
@@ -723,16 +707,61 @@ fn lower_aggregate_assignment<'tcx>(
             place_ty
         )
     })?;
-    if operands.len() != field_types.len() {
+
+    match rvalue {
+        Rvalue::Aggregate(kind, operands) => {
+            match **kind {
+                AggregateKind::Tuple => {}
+                AggregateKind::Adt(def_id, ..) if tcx.adt_def(def_id).is_struct() => {}
+                _ => {
+                    return Err(format!(
+                        "{}: only tuple and struct aggregate rvalues are currently supported",
+                        tcx.symbol_name(instance).name
+                    ));
+                }
+            }
+            lower_aggregate_operands(
+                tcx,
+                instance,
+                mir,
+                state,
+                place,
+                &field_types,
+                operands.iter(),
+            )
+        }
+        Rvalue::Use(Operand::Copy(src_place) | Operand::Move(src_place), _) => {
+            lower_aggregate_copy(tcx, instance, mir, state, place, &field_types, *src_place)
+        }
+        other => Err(format!(
+            "{}: aggregate assignment only supports aggregate construction and local copy/move, got `{other:?}`",
+            tcx.symbol_name(instance).name
+        )),
+    }
+}
+
+fn lower_aggregate_operands<'a, 'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    state: &LoweringState,
+    place: Place<'tcx>,
+    field_types: &[ScalarType],
+    operands: impl ExactSizeIterator<Item = &'a Operand<'tcx>>,
+) -> Result<Vec<Operation>, String>
+where
+    'tcx: 'a,
+{
+    let operand_count = operands.len();
+    if operand_count != field_types.len() {
         return Err(format!(
-            "{}: tuple aggregate has {} operands for {} fields",
+            "{}: aggregate has {} operands for {} fields",
             tcx.symbol_name(instance).name,
-            operands.len(),
+            operand_count,
             field_types.len()
         ));
     }
     operands
-        .iter()
         .enumerate()
         .map(|(field, operand)| {
             let dst = state.tuple_field(place.local, field).ok_or_else(|| {
@@ -744,20 +773,72 @@ fn lower_aggregate_assignment<'tcx>(
             let operand_ty = monomorphize_ty(tcx, instance, operand.ty(&mir.local_decls, tcx));
             let operand_scalar = scalar_type_for_ty(operand_ty).ok_or_else(|| {
                 format!(
-                    "{}: tuple field {field} has unsupported operand type `{}`",
+                    "{}: aggregate field {field} has unsupported operand type `{}`",
                     tcx.symbol_name(instance).name,
                     operand_ty
                 )
             })?;
             if operand_scalar != field_types[field] {
                 return Err(format!(
-                    "{}: tuple field {field} type mismatch",
+                    "{}: aggregate field {field} type mismatch",
                     tcx.symbol_name(instance).name
                 ));
             }
             Ok(Operation::Copy {
                 dst,
                 src: lower_operand(tcx, instance, mir, state, operand)?,
+            })
+        })
+        .collect()
+}
+
+fn lower_aggregate_copy<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    state: &LoweringState,
+    dst_place: Place<'tcx>,
+    dst_field_types: &[ScalarType],
+    src_place: Place<'tcx>,
+) -> Result<Vec<Operation>, String> {
+    if !src_place.projection.is_empty() {
+        return Err(format!(
+            "{}: aggregate copy source must be an unprojected local",
+            tcx.symbol_name(instance).name
+        ));
+    }
+    let src_ty = monomorphize_ty(tcx, instance, src_place.ty(&mir.local_decls, tcx).ty);
+    let src_field_types = scalar_aggregate_field_types(tcx, src_ty).ok_or_else(|| {
+        format!(
+            "{}: aggregate copy source has unsupported type `{}`",
+            tcx.symbol_name(instance).name,
+            src_ty
+        )
+    })?;
+    if src_field_types != dst_field_types {
+        return Err(format!(
+            "{}: aggregate copy field type mismatch",
+            tcx.symbol_name(instance).name
+        ));
+    }
+
+    (0..dst_field_types.len())
+        .map(|field| {
+            let dst = state.tuple_field(dst_place.local, field).ok_or_else(|| {
+                format!(
+                    "{}: aggregate destination field {field} is missing a synthetic local",
+                    tcx.symbol_name(instance).name
+                )
+            })?;
+            let src = state.tuple_field(src_place.local, field).ok_or_else(|| {
+                format!(
+                    "{}: aggregate source field {field} is missing a synthetic local",
+                    tcx.symbol_name(instance).name
+                )
+            })?;
+            Ok(Operation::Copy {
+                dst,
+                src: ValueRef::Local(src),
             })
         })
         .collect()

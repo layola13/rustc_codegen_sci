@@ -33,9 +33,23 @@ pub extern "C" fn sci_tuple_sum_i32(a: i32, b: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_tuple_copy_sum_i32(a: i32, b: i32) -> i32 {
+    let pair = (a, b);
+    let copy = pair;
+    copy.0 + copy.1
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_struct_sum_i32(a: i32, b: i32) -> i32 {
     let pair = ScalarPair { left: a, right: b };
     pair.left + pair.right
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_struct_copy_sum_i32(a: i32, b: i32) -> i32 {
+    let pair = ScalarPair { left: a, right: b };
+    let copy = pair;
+    copy.left + copy.right
 }
 
 #[unsafe(no_mangle)]
