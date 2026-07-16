@@ -1791,6 +1791,7 @@ fn scalar_type_for_ty(ty: Ty<'_>) -> Option<ScalarType> {
         ty::Uint(ty::UintTy::U16) => Some(ScalarType::U16),
         ty::Uint(ty::UintTy::U32) => Some(ScalarType::U32),
         ty::Uint(ty::UintTy::U64 | ty::UintTy::Usize) => Some(ScalarType::U64),
+        ty::RawPtr(..) | ty::Ref(..) => Some(ScalarType::Ptr),
         _ => None,
     }
 }
@@ -1847,6 +1848,7 @@ fn all_ones_for_scalar(ty: ScalarType) -> u64 {
         ScalarType::I16 | ScalarType::U16 => u16::MAX.into(),
         ScalarType::I32 | ScalarType::U32 => u32::MAX.into(),
         ScalarType::I64 | ScalarType::U64 => u64::MAX,
+        ScalarType::Ptr => unreachable!("pointer values do not have an integer all-ones mask"),
     }
 }
 

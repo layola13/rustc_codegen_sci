@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 1;
-pub const PLAN_VERSION: u16 = 5;
+pub const PLAN_VERSION: u16 = 6;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +25,7 @@ pub enum ScalarType {
     U16 = 6,
     U32 = 7,
     U64 = 8,
+    Ptr = 9,
 }
 
 impl ScalarType {
@@ -39,6 +40,7 @@ impl ScalarType {
             Self::U16 => "u16",
             Self::U32 => "u32",
             Self::U64 => "u64",
+            Self::Ptr => "ptr",
         }
     }
 }
@@ -482,6 +484,7 @@ impl WireDecode for ScalarType {
             6 => Ok(Self::U16),
             7 => Ok(Self::U32),
             8 => Ok(Self::U64),
+            9 => Ok(Self::Ptr),
             _ => Err(ProtocolError::InvalidTag("scalar type", tag)),
         }
     }
@@ -1003,6 +1006,11 @@ mod tests {
                         symbol: "host_note_i32".into(),
                         argument_types: vec![ScalarType::I32],
                         return_type: None,
+                    },
+                    ExternFunctionPlan {
+                        symbol: "host_identity_ptr".into(),
+                        argument_types: vec![ScalarType::Ptr],
+                        return_type: Some(ScalarType::Ptr),
                     },
                 ],
                 functions: vec![

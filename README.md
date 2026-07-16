@@ -13,21 +13,22 @@ The backend is pinned to:
 - SCI `0.0.4`
 
 The current bring-up slice supports `x86_64-unknown-linux-gnu`, `panic=abort`,
-`no_std`, scalar integer and void function signatures including
+`no_std`, scalar integer, raw pointer, and void function signatures including
 `isize`/`usize`, straight-line MIR assignments, scalar integer arithmetic,
-signed/unsigned comparisons, integer casts, direct scalar function calls,
-scalar `extern "C"` calls, unit/void returns and calls, MIR assert abort paths,
-division/remainder, shifts, unary integer negation/bit-not, multi-block bool
-branch CFG, and scalar integer `SwitchInt`/`match` lowered through
+signed/unsigned comparisons, integer casts, direct scalar/raw-pointer function
+calls, scalar/raw-pointer `extern "C"` calls, unit/void returns and calls, MIR
+assert abort paths, division/remainder, shifts, unary integer negation/bit-not,
+multi-block bool branch CFG, and scalar integer `SwitchInt`/`match` lowered through
 worker-generated compare chains. With overflow checks enabled, checked integer
 add/sub/mul are lowered through synthetic `(value, overflow)` tuple fields
 before MIR `Assert`; checked mul is supported for integer widths up to 64
 bits. Local scalar tuples and structs can be constructed and read through
 field projection, and local scalar aggregate copy/move is lowered field by
 field. Function-internal empty struct ZST locals are ignored as no-op values;
-aggregate and ZST struct argument/return ABI is still rejected. Unsupported
-targets, ABIs, MIR operations, and features are hard errors. There is no
-LLVM-backend or `bc2sa` fallback.
+pointer load/store/deref is not supported yet. Aggregate and ZST struct
+argument/return ABI is still rejected. Unsupported targets, ABIs, MIR
+operations, and features are hard errors. There is no LLVM-backend or `bc2sa`
+fallback.
 
 Build and run the focused smoke gate:
 

@@ -3,6 +3,7 @@
 unsafe extern "C" {
     fn sci_host_add_i32(a: i32, b: i32) -> i32;
     fn sci_host_note_i32(value: i32);
+    fn sci_host_identity_ptr(value: *const i32) -> *const i32;
 }
 
 struct ScalarPair {
@@ -58,6 +59,22 @@ pub extern "C" fn sci_struct_copy_sum_i32(a: i32, b: i32) -> i32 {
 pub extern "C" fn sci_empty_struct_local_i32(a: i32, b: i32) -> i32 {
     let _marker = EmptyMarker;
     a + b
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn sci_identity_ptr(value: *const i32) -> *const i32 {
+    value
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_call_identity_ptr(value: *const i32) -> *const i32 {
+    sci_identity_ptr(value)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_call_host_identity_ptr(value: *const i32) -> *const i32 {
+    unsafe { sci_host_identity_ptr(value) }
 }
 
 #[unsafe(no_mangle)]

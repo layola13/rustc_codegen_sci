@@ -15,8 +15,9 @@ Baseline date: 2026-07-16.
 - Rustc CGU traversal, MIR lowering, worker invocation, and object artifact
   return to rustc's normal output pipeline.
 - Smoke coverage for scalar addition, signed comparison, bool-to-int cast,
-  `isize`/`usize`, direct scalar function calls, scalar extern C calls,
-  unit/void returns and calls, if/else CFG, MIR assert abort paths,
+  `isize`/`usize`, raw pointer direct ABI, direct scalar/raw-pointer function
+  calls, scalar/raw-pointer extern C calls, unit/void returns and calls,
+  if/else CFG, MIR assert abort paths,
   signed/unsigned scalar integer `SwitchInt`/`match`, division/remainder,
   shifts, unary integer negation/bit-not, checked add/sub/mul overflow tuple
   lowering through 64-bit integers, local scalar tuple/struct construction and
@@ -30,11 +31,11 @@ Baseline date: 2026-07-16.
 | Target | `x86_64-unknown-linux-gnu` |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
-| Function ABI | scalar integer and void C/Rust ABI with direct pass modes, including `isize`/`usize` on 64-bit targets |
+| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with direct pass modes, including `isize`/`usize` on 64-bit targets; pointer deref/load/store is not supported yet |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
-| MIR calls | direct module-local scalar/void function calls and direct scalar/void `extern "C"` calls with unreachable unwind |
+| MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls with unreachable unwind |
 | MIR rvalues | `Use`, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
-| Values | integer/bool locals and integer/bool constants, including `isize`/`usize` lowered through the active target pointer width |
+| Values | integer/bool/raw-pointer locals and integer/bool constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |
 | Proof mode | `rust-trusted` |
 

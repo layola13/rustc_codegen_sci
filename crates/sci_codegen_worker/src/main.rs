@@ -352,6 +352,12 @@ fn validate_operation(
             validate_value(locals, defined, rhs)?;
             validate_destination(locals, *dst)?;
             let dst_ty = locals[dst];
+            if dst_ty == ScalarType::Ptr {
+                return Err(format!(
+                    "{} binary operation on ptr is not supported",
+                    function.symbol
+                ));
+            }
             if value_type(locals, lhs)? != dst_ty || value_type(locals, rhs)? != dst_ty {
                 return Err(format!(
                     "{} binary operation has inconsistent scalar types",
@@ -370,7 +376,15 @@ fn validate_operation(
                     function.symbol
                 ));
             }
-            if value_type(locals, lhs)? != value_type(locals, rhs)? {
+            let lhs_ty = value_type(locals, lhs)?;
+            let rhs_ty = value_type(locals, rhs)?;
+            if lhs_ty == ScalarType::Ptr || rhs_ty == ScalarType::Ptr {
+                return Err(format!(
+                    "{} compare operation on ptr is not supported",
+                    function.symbol
+                ));
+            }
+            if lhs_ty != rhs_ty {
                 return Err(format!(
                     "{} compare operation has inconsistent scalar types",
                     function.symbol
@@ -381,6 +395,12 @@ fn validate_operation(
         Operation::Cast { dst, src, ty, .. } => {
             validate_value(locals, defined, src)?;
             validate_destination(locals, *dst)?;
+            if value_type(locals, src)? == ScalarType::Ptr || *ty == ScalarType::Ptr {
+                return Err(format!(
+                    "{} cast operation on ptr is not supported",
+                    function.symbol
+                ));
+            }
             if locals[dst] != *ty {
                 return Err(format!(
                     "{} cast destination type mismatch",
@@ -435,6 +455,12 @@ fn validate_terminator(
             if discr_ty == ScalarType::I1 {
                 return Err(format!(
                     "{} bool SwitchInt must be represented as Branch",
+                    function.symbol
+                ));
+            }
+            if discr_ty == ScalarType::Ptr {
+                return Err(format!(
+                    "{} ptr SwitchInt is not supported",
                     function.symbol
                 ));
             }
@@ -718,7 +744,7 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
             .cloned()
             .ok_or_else(|| format!("{} block {} is unreachable", function.symbol, block.id))?;
         for operation in &block.operations {
-            emit_operation(out, operation);
+            emit_operation(out, &locals, operation);
             defined.insert(operation_destination(operation));
         }
         emit_terminator(out, function, block.id, &defined, &block.terminator);
@@ -726,12 +752,16 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
     Ok(())
 }
 
-fn emit_operation(out: &mut String, operation: &Operation) {
+fn emit_operation(out: &mut String, locals: &BTreeMap<u32, ScalarType>, operation: &Operation) {
     match operation {
         Operation::Copy { dst, src } => {
             out.push_str("    ");
             out.push_str(&local_name(*dst));
-            out.push_str(" = add ");
+            if locals[dst] == ScalarType::Ptr {
+                out.push_str(" = ptr_add ");
+            } else {
+                out.push_str(" = add ");
+            }
             emit_value(out, src);
             out.push_str(", 0\n");
         }
@@ -892,6 +922,10 @@ fn emit_value(out: &mut String, value: &ValueRef) {
             ScalarType::U16 => out.push_str(&(*bits as u16).to_string()),
             ScalarType::U32 => out.push_str(&(*bits as u32).to_string()),
             ScalarType::U64 => out.push_str(&bits.to_string()),
+            ScalarType::Ptr => {
+                out.push_str(&bits.to_string());
+                out.push_str(" as ptr");
+            }
         },
     }
 }
