@@ -586,12 +586,6 @@ fn lower_checked_binary_op<'tcx>(
     lhs: &Operand<'tcx>,
     rhs: &Operand<'tcx>,
 ) -> Result<Vec<Operation>, String> {
-    if op == BinOp::MulWithOverflow {
-        return Err(format!(
-            "{}: checked multiplication is not yet supported",
-            tcx.symbol_name(instance).name
-        ));
-    }
     if !place.projection.is_empty() {
         return Err(format!(
             "{}: checked arithmetic destination must be an unprojected tuple local",
@@ -633,13 +627,27 @@ fn lower_checked_binary_op<'tcx>(
         op: match op {
             BinOp::AddWithOverflow => BinaryOp::Add,
             BinOp::SubWithOverflow => BinaryOp::Sub,
-            _ => unreachable!("checked multiplication returned above"),
+            BinOp::MulWithOverflow => BinaryOp::Mul,
+            _ => unreachable!("not a checked arithmetic operation"),
         },
         lhs: lhs_value.clone(),
         rhs: rhs_value.clone(),
     }];
 
-    if signed {
+    if op == BinOp::MulWithOverflow {
+        append_mul_overflow_check(
+            tcx,
+            instance,
+            state,
+            &mut operations,
+            lhs_scalar,
+            signed,
+            lhs_value,
+            rhs_value,
+            result_dst,
+            overflow_dst,
+        )?;
+    } else if signed {
         append_signed_overflow_check(
             state,
             &mut operations,
@@ -664,10 +672,71 @@ fn lower_checked_binary_op<'tcx>(
                 lhs: lhs_value,
                 rhs: rhs_value,
             },
-            _ => unreachable!("checked multiplication returned above"),
+            _ => unreachable!("checked multiplication handled above"),
         });
     }
     Ok(operations)
+}
+
+fn append_mul_overflow_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    state: &mut LoweringState,
+    operations: &mut Vec<Operation>,
+    ty: ScalarType,
+    signed: bool,
+    lhs: ValueRef,
+    rhs: ValueRef,
+    result_dst: u32,
+    overflow_dst: u32,
+) -> Result<(), String> {
+    let wide_ty = match (ty, signed) {
+        (ScalarType::I8 | ScalarType::I16 | ScalarType::I32, true) => ScalarType::I64,
+        (ScalarType::U8 | ScalarType::U16 | ScalarType::U32, false) => ScalarType::U64,
+        _ => {
+            return Err(format!(
+                "{}: checked multiplication for {:?} is not yet supported",
+                tcx.symbol_name(instance).name,
+                ty
+            ));
+        }
+    };
+    let widen_op = if signed { CastOp::Sext } else { CastOp::Zext };
+    let lhs_wide = state.allocate_temp(wide_ty);
+    let rhs_wide = state.allocate_temp(wide_ty);
+    let product_wide = state.allocate_temp(wide_ty);
+    let result_wide = state.allocate_temp(wide_ty);
+    operations.push(Operation::Cast {
+        dst: lhs_wide,
+        op: widen_op,
+        src: lhs,
+        ty: wide_ty,
+    });
+    operations.push(Operation::Cast {
+        dst: rhs_wide,
+        op: widen_op,
+        src: rhs,
+        ty: wide_ty,
+    });
+    operations.push(Operation::Binary {
+        dst: product_wide,
+        op: BinaryOp::Mul,
+        lhs: ValueRef::Local(lhs_wide),
+        rhs: ValueRef::Local(rhs_wide),
+    });
+    operations.push(Operation::Cast {
+        dst: result_wide,
+        op: widen_op,
+        src: ValueRef::Local(result_dst),
+        ty: wide_ty,
+    });
+    operations.push(Operation::Compare {
+        dst: overflow_dst,
+        op: CompareOp::Ne,
+        lhs: ValueRef::Local(product_wide),
+        rhs: ValueRef::Local(result_wide),
+    });
+    Ok(())
 }
 
 fn append_signed_overflow_check(

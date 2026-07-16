@@ -17,7 +17,7 @@ Baseline date: 2026-07-16.
 - Smoke coverage for scalar addition, signed comparison, bool-to-int cast,
   direct scalar function calls, if/else CFG, MIR assert abort paths,
   scalar integer `SwitchInt`/`match`, division/remainder, shifts, unary integer
-  negation/bit-not, checked add/sub overflow tuple lowering, SCI object
+  negation/bit-not, checked add/sub/mul overflow tuple lowering, SCI object
   emission, native link, and execution.
 
 ## Bring-up Capability
@@ -30,7 +30,7 @@ Baseline date: 2026-07-16.
 | Function ABI | scalar integer C/Rust ABI with direct pass modes |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar function calls with unreachable unwind |
-| MIR rvalues | `Use`, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub `(value, overflow)` tuple lowering, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
+| MIR rvalues | `Use`, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering, integer comparisons, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts |
 | Values | integer/bool locals and integer/bool constants |
 | SCI format | SA text generated from canonical plan |
 | Proof mode | `rust-trusted` |
@@ -41,7 +41,7 @@ Every missing capability is rejected before object publication.
 
 The full staged roadmap is tracked in `docs/implementation_plan_cn.md`.
 
-1. Extern/indirect/ABI-rich calls, checked multiplication overflow lowering,
+1. Extern/indirect/ABI-rich calls, checked multiplication for 64-bit integers,
    signed negative `SwitchInt` edge cases, and wider scalar operation coverage.
 2. Complete `TyAndLayout` and `FnAbi` serialization, aggregates, allocations,
    relocations, statics, and drop glue.

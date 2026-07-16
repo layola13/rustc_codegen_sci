@@ -27,6 +27,11 @@ pub extern "C" fn sci_sub_i32(a: i32, b: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_mul_i32(a: i32, b: i32) -> i32 {
+    a * b
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_div_i32(a: i32, b: i32) -> i32 {
     a / b
 }

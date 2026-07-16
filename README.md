@@ -18,10 +18,11 @@ scalar integer arithmetic, signed/unsigned comparisons, integer casts, direct
 scalar function calls, MIR assert abort paths, division/remainder, shifts,
 unary integer negation/bit-not, multi-block bool branch CFG, and scalar
 integer `SwitchInt`/`match` lowered through worker-generated compare chains.
-With overflow checks enabled, checked integer add/sub are lowered through
-synthetic `(value, overflow)` tuple fields before MIR `Assert`. Unsupported
-targets, ABIs, MIR operations, and features are hard errors. There is no
-LLVM-backend or `bc2sa` fallback.
+With overflow checks enabled, checked integer add/sub/mul are lowered through
+synthetic `(value, overflow)` tuple fields before MIR `Assert`; checked mul is
+currently supported for integer widths up to 32 bits. Unsupported targets,
+ABIs, MIR operations, and features are hard errors. There is no LLVM-backend
+or `bc2sa` fallback.
 
 Build and run the focused smoke gate:
 
