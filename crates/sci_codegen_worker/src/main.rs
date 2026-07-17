@@ -6,9 +6,10 @@ use std::process::{Command, ExitCode};
 
 use sci_protocol::{
     AbiPassModePlan, BasicBlockPlan, CallingConventionPlan, CompileRequest, CompileResponse,
-    Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation,
-    PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe,
-    TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, read_frame, write_frame,
+    DiagnosticLocation, Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan,
+    NicheRecipe, Operation, PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan,
+    SwitchCasePlan, TagEncodingRecipe, TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef,
+    VariantRecipe, read_frame, write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
@@ -47,15 +48,103 @@ fn run_stdio_once() -> Result<(), String> {
             request_id: request.request_id,
             success: true,
             diagnostic: String::new(),
+            diagnostic_code: String::new(),
+            diagnostic_location: None,
         },
-        Err(diagnostic) => CompileResponse {
-            request_id: request.request_id,
-            success: false,
-            diagnostic,
-        },
+        Err(diagnostic) => classified_response(request.request_id, diagnostic),
     };
     write_frame(io::stdout().lock(), &response)
         .map_err(|err| format!("response encode failed: {err}"))
+}
+
+fn classified_response(request_id: u64, diagnostic: String) -> CompileResponse {
+    CompileResponse {
+        request_id,
+        success: false,
+        diagnostic_code: classify_diagnostic_code(&diagnostic).into(),
+        diagnostic_location: diagnostic_location(&diagnostic),
+        diagnostic,
+    }
+}
+
+fn classify_diagnostic_code(diagnostic: &str) -> &'static str {
+    if diagnostic.contains("unsupported Pair pass mode")
+        || diagnostic.contains("unsupported Cast pass mode")
+        || diagnostic.contains("unsupported Indirect pass mode")
+    {
+        "SCI_ABI_UNSUPPORTED_PASS_MODE"
+    } else if diagnostic.contains(" ABI")
+        || diagnostic.contains("calling convention")
+        || diagnostic.contains("variadic")
+        || diagnostic.contains("unwinding")
+    {
+        "SCI_ABI_INVALID"
+    } else if diagnostic.contains("unsupported target")
+        || diagnostic.contains("target descriptor")
+        || diagnostic.contains("data layout")
+        || diagnostic.contains("relocation model")
+        || diagnostic.contains("code model")
+    {
+        "SCI_TARGET_UNSUPPORTED"
+    } else if diagnostic.contains("type layout")
+        || diagnostic.contains("field")
+        || diagnostic.contains("variant")
+        || diagnostic.contains("niche")
+        || diagnostic.contains("alignment")
+    {
+        "SCI_LAYOUT_INVALID"
+    } else if diagnostic.contains("block")
+        || diagnostic.contains("callee")
+        || diagnostic.contains("branch")
+        || diagnostic.contains("terminator")
+    {
+        "SCI_CFG_INVALID"
+    } else if diagnostic.contains("SA builder failed") {
+        "SCI_OBJECT_EMIT_FAILED"
+    } else if diagnostic.contains("failed to create")
+        || diagnostic.contains("failed to write")
+        || diagnostic.contains("failed to start")
+    {
+        "SCI_IO_FAILED"
+    } else {
+        "SCI_WORKER_REJECTED"
+    }
+}
+
+fn diagnostic_location(diagnostic: &str) -> Option<DiagnosticLocation> {
+    let function = diagnostic_function(diagnostic);
+    let block = diagnostic_number_after(diagnostic, "block ");
+    let local = diagnostic_number_after(diagnostic, "local ");
+    if function.is_none() && block.is_none() && local.is_none() {
+        None
+    } else {
+        Some(DiagnosticLocation {
+            function,
+            block,
+            local,
+        })
+    }
+}
+
+fn diagnostic_function(diagnostic: &str) -> Option<String> {
+    if let Some(rest) = diagnostic.strip_prefix("function ") {
+        return rest.split_whitespace().next().map(str::to_string);
+    }
+    if let Some(rest) = diagnostic.strip_prefix("extern function ") {
+        return rest.split_whitespace().next().map(str::to_string);
+    }
+    diagnostic
+        .split_once(':')
+        .and_then(|(name, _)| (!name.contains(char::is_whitespace)).then(|| name.to_string()))
+}
+
+fn diagnostic_number_after(diagnostic: &str, marker: &str) -> Option<u32> {
+    let rest = diagnostic.split(marker).nth(1)?;
+    let number = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    (!number.is_empty()).then(|| number.parse().ok()).flatten()
 }
 
 fn compile_request(request: &CompileRequest) -> Result<(), String> {
@@ -1594,6 +1683,38 @@ mod tests {
         assert!(
             err.contains(expected),
             "expected diagnostic containing `{expected}`, got `{err}`"
+        );
+    }
+
+    #[test]
+    fn worker_diagnostic_response_carries_code_and_location() {
+        let response = classified_response(
+            7,
+            "function add ABI argument 0 uses unsupported Pair pass mode".into(),
+        );
+
+        assert!(!response.success);
+        assert_eq!(response.request_id, 7);
+        assert_eq!(response.diagnostic_code, "SCI_ABI_UNSUPPORTED_PASS_MODE");
+        assert_eq!(
+            response.diagnostic_location,
+            Some(DiagnosticLocation {
+                function: Some("add".into()),
+                block: None,
+                local: None,
+            })
+        );
+    }
+
+    #[test]
+    fn worker_diagnostic_location_extracts_local_numbers() {
+        assert_eq!(
+            diagnostic_location("function add argument local 3 is missing"),
+            Some(DiagnosticLocation {
+                function: Some("add".into()),
+                block: None,
+                local: Some(3),
+            })
         );
     }
 

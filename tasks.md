@@ -26,6 +26,8 @@ Baseline: 2026-07-16.
   SCI-to-C extern calls.
 - [x] Auditable 33-case linked Direct scalar ABI suite with signed/unsigned
   narrow-integer boundary values.
+- [x] Wire-level worker diagnostic codes and coarse function/block/local
+  diagnostic locations.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI
@@ -36,6 +38,7 @@ Baseline: 2026-07-16.
 - [x] Add worker-level negative tests for unsupported non-Direct ABI modes.
 - [x] Add initial linked bidirectional Direct scalar ABI fixtures.
 - [x] Count and execute 20+ linked Direct ABI fixture cases in the smoke gate.
+- [x] Add structured worker diagnostic codes to RPC responses.
 - [ ] Implement Pair/Cast/Indirect ABI lowering and object emission.
 - [ ] Build 20-30 bidirectional C/LLVM ABI fixtures.
 - [ ] Add structured diagnostic codes and rustc span/MIR locations.

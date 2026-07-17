@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
-pub const RPC_VERSION: u16 = 1;
+pub const RPC_VERSION: u16 = 2;
 pub const PLAN_VERSION: u16 = 9;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
@@ -416,6 +416,15 @@ pub struct CompileResponse {
     pub request_id: u64,
     pub success: bool,
     pub diagnostic: String,
+    pub diagnostic_code: String,
+    pub diagnostic_location: Option<DiagnosticLocation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticLocation {
+    pub function: Option<String>,
+    pub block: Option<u32>,
+    pub local: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -1525,11 +1534,47 @@ impl WireDecode for CompileRequest {
     }
 }
 
+impl WireEncode for DiagnosticLocation {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        match &self.function {
+            Some(function) => {
+                encoder.u8(1);
+                encoder.string(function)?;
+            }
+            None => encoder.u8(0),
+        }
+        self.block.encode(encoder)?;
+        self.local.encode(encoder)
+    }
+}
+
+impl WireDecode for DiagnosticLocation {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        let function = match decoder.u8()? {
+            0 => None,
+            1 => Some(decoder.string()?),
+            tag => {
+                return Err(ProtocolError::InvalidTag(
+                    "optional diagnostic function",
+                    tag,
+                ));
+            }
+        };
+        Ok(Self {
+            function,
+            block: Option::<u32>::decode(decoder)?,
+            local: Option::<u32>::decode(decoder)?,
+        })
+    }
+}
+
 impl WireEncode for CompileResponse {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.u64(self.request_id);
         encoder.u8(u8::from(self.success));
-        encoder.string(&self.diagnostic)
+        encoder.string(&self.diagnostic)?;
+        encoder.string(&self.diagnostic_code)?;
+        self.diagnostic_location.encode(encoder)
     }
 }
 
@@ -1543,6 +1588,8 @@ impl WireDecode for CompileResponse {
                 tag => return Err(ProtocolError::InvalidTag("boolean", tag)),
             },
             diagnostic: decoder.string()?,
+            diagnostic_code: decoder.string()?,
+            diagnostic_location: Option::<DiagnosticLocation>::decode(decoder)?,
         })
     }
 }
@@ -1862,6 +1909,23 @@ mod tests {
         request.module.target.code_model = Some("small".into());
         let bytes = encode_payload(&request).unwrap();
         assert_eq!(decode_payload::<CompileRequest>(&bytes).unwrap(), request);
+    }
+
+    #[test]
+    fn response_diagnostic_round_trip_is_lossless() {
+        let response = CompileResponse {
+            request_id: 42,
+            success: false,
+            diagnostic: "function add ABI argument 0 uses unsupported Pair pass mode".into(),
+            diagnostic_code: "SCI_ABI_UNSUPPORTED_PASS_MODE".into(),
+            diagnostic_location: Some(DiagnosticLocation {
+                function: Some("add".into()),
+                block: None,
+                local: Some(1),
+            }),
+        };
+        let bytes = encode_payload(&response).unwrap();
+        assert_eq!(decode_payload::<CompileResponse>(&bytes).unwrap(), response);
     }
 
     #[test]

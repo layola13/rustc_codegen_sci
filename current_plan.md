@@ -20,10 +20,12 @@ No LLVM backend fallback and no `bc2sa` fallback.
    has 33 counted Direct scalar C-to-SCI and SCI-to-C cases.
 2. Implement the first Pair/Cast/Indirect C ABI fixtures and aggregate return/arg
    lowering against rustc `FnAbi` evidence.
-3. Add target-qualified stack/load/store plans with size and alignment, then
+3. Extend structured diagnostics from worker RPC codes/coarse locations to
+   backend-originated rustc spans and precise MIR locations.
+4. Add target-qualified stack/load/store plans with size and alignment, then
    connect local aggregates to memory representation.
-4. Add allocation images and relocations for statics, strings, and panic data.
-5. Add direct SAB no-fallback emission from the same canonical plan.
+5. Add allocation images and relocations for statics, strings, and panic data.
+6. Add direct SAB no-fallback emission from the same canonical plan.
 
 ## Exit Gates
 

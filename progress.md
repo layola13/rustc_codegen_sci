@@ -25,8 +25,10 @@ Baseline: 2026-07-16.
   validation boundary, plus ABI value size/alignment validation.
 - `4635c76`: linked Direct scalar ABI smoke fixture matrix covering C-to-SCI
   exported functions and SCI-to-C extern calls.
-- Current worktree: auditable 33-case Direct scalar ABI suite with signed and
-  unsigned narrow-integer boundary values.
+- `544be0e`: auditable 33-case Direct scalar ABI suite with signed and unsigned
+  narrow-integer boundary values.
+- Current worktree: RPC v2 worker diagnostic codes and coarse diagnostic
+  locations.
 
 ## Current Increment
 
@@ -55,6 +57,12 @@ Baseline: 2026-07-16.
 - Expanded `abi_direct` into a counted 33-case harness, adding signed i8/i16
   negative round trips and unsigned u8/u16 high-bit round trips in both
   C-to-SCI and SCI-to-C directions.
+- Upgraded worker RPC responses to carry a structured diagnostic code and
+  optional function/block/local diagnostic location alongside the existing
+  message.
+- Classified worker rejections into ABI, target, layout, CFG, IO, object
+  emission, and generic rejection codes, and included those fields in backend
+  rustc fatal messages.
 
 ## Current Boundary
 
@@ -67,5 +75,8 @@ Worker tests now cover the current serialized ABI and layout validation
 boundary, and the smoke suite now has 33 linked Direct scalar ABI cases. The
 broader bidirectional C/LLVM ABI suite still needs non-Direct and aggregate
 coverage.
+Worker failures now have structured RPC diagnostic codes and coarse parsed
+locations, but backend-originated rustc spans and precise MIR statement
+locations are still pending.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.

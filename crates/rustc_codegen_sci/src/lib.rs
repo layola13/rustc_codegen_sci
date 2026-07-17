@@ -2251,10 +2251,7 @@ fn run_worker(
         ));
     }
     if !response.success {
-        return Err(format!(
-            "SCI worker rejected module: {}",
-            response.diagnostic
-        ));
+        return Err(format_worker_rejection(&response));
     }
     if !object_path.is_file() {
         return Err(format!(
@@ -2263,6 +2260,39 @@ fn run_worker(
         ));
     }
     Ok(())
+}
+
+fn format_worker_rejection(response: &CompileResponse) -> String {
+    let mut message = String::from("SCI worker rejected module");
+    if !response.diagnostic_code.is_empty() {
+        message.push_str(" [");
+        message.push_str(&response.diagnostic_code);
+        message.push(']');
+    }
+    if let Some(location) = &response.diagnostic_location {
+        let location = format_diagnostic_location(location);
+        if !location.is_empty() {
+            message.push_str(" at ");
+            message.push_str(&location);
+        }
+    }
+    message.push_str(": ");
+    message.push_str(&response.diagnostic);
+    message
+}
+
+fn format_diagnostic_location(location: &sci_protocol::DiagnosticLocation) -> String {
+    let mut parts = Vec::new();
+    if let Some(function) = &location.function {
+        parts.push(format!("function `{function}`"));
+    }
+    if let Some(block) = location.block {
+        parts.push(format!("block {block}"));
+    }
+    if let Some(local) = location.local {
+        parts.push(format!("local {local}"));
+    }
+    parts.join(", ")
 }
 
 #[unsafe(no_mangle)]
