@@ -14,11 +14,11 @@ No LLVM backend fallback and no `bc2sa` fallback.
 
 ## Current Window
 
-1. Build 20-30 ABI fixtures over the serialized rustc `FnAbiPlan` and
-   `TypeLayoutRecipe`, starting
-   with real Rust aggregate arg/return cases once lowering reaches worker
-   validation.
-2. Implement the first Pair/Indirect C ABI fixtures and aggregate return/arg
+1. Build 20-30 bidirectional C/LLVM ABI fixtures over the serialized rustc
+   `FnAbiPlan` and `TypeLayoutRecipe`; the worker-level ABI/layout fixture
+   matrix now covers the current validation boundary, but real linked fixtures
+   are still pending.
+2. Implement the first Pair/Cast/Indirect C ABI fixtures and aggregate return/arg
    lowering against rustc `FnAbi` evidence.
 3. Add target-qualified stack/load/store plans with size and alignment, then
    connect local aggregates to memory representation.

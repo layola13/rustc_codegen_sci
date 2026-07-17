@@ -495,6 +495,11 @@ fn validate_abi_value(
     value: &sci_protocol::AbiValuePlan,
     is_lowered: bool,
 ) -> Result<(), String> {
+    validate_size_align(
+        &format!("{context} ABI {label} layout"),
+        value.size,
+        value.align,
+    )?;
     match value.mode {
         AbiPassModePlan::Ignore if !is_lowered => Ok(()),
         AbiPassModePlan::Direct if is_lowered => Ok(()),
@@ -1384,14 +1389,45 @@ fn switch_otherwise_label(function: &FunctionPlan, block_id: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sci_protocol::{AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan};
+    use sci_protocol::{
+        AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan, ValidRangeRecipe,
+        VariantLayoutRecipe,
+    };
 
     fn abi_value(mode: AbiPassModePlan) -> AbiValuePlan {
-        AbiValuePlan {
-            size: 8,
-            align: 8,
-            mode,
-        }
+        abi_value_with(8, 8, mode)
+    }
+
+    fn abi_value_with(size: u64, align: u64, mode: AbiPassModePlan) -> AbiValuePlan {
+        AbiValuePlan { size, align, mode }
+    }
+
+    fn direct_abi_value(size: u64, align: u64) -> AbiValuePlan {
+        abi_value_with(size, align, AbiPassModePlan::Direct)
+    }
+
+    fn ignored_abi_value() -> AbiValuePlan {
+        abi_value_with(0, 1, AbiPassModePlan::Ignore)
+    }
+
+    fn cast_abi_value() -> AbiValuePlan {
+        abi_value(AbiPassModePlan::Cast {
+            pad_i32: false,
+            prefix: vec![integer_register(64)],
+            rest_offset: None,
+            rest: AbiUniformPlan {
+                unit: integer_register(64),
+                total_bytes: 8,
+                consecutive: true,
+            },
+        })
+    }
+
+    fn indirect_abi_value() -> AbiValuePlan {
+        abi_value(AbiPassModePlan::Indirect {
+            has_metadata: false,
+            on_stack: true,
+        })
     }
 
     fn fn_abi(arguments: Vec<AbiValuePlan>, return_value: AbiValuePlan) -> FnAbiPlan {
@@ -1429,7 +1465,7 @@ mod tests {
     fn scalar_layout() -> ScalarLayoutRecipe {
         ScalarLayoutRecipe {
             primitive: "Int(I32, true)".into(),
-            valid_range: Some(sci_protocol::ValidRangeRecipe {
+            valid_range: Some(ValidRangeRecipe {
                 start: 0,
                 end: u32::MAX.into(),
             }),
@@ -1449,6 +1485,106 @@ mod tests {
             variants: VariantRecipe::Single { index: 0 },
             largest_niche: None,
             scalar_valid_ranges: vec![scalar_layout(), scalar_layout()],
+        }
+    }
+
+    fn union_layout() -> TypeLayoutRecipe {
+        TypeLayoutRecipe {
+            ty: "union U".into(),
+            size: 8,
+            align: 8,
+            uninhabited: false,
+            fields: FieldLayoutRecipe::Union { count: 2 },
+            variants: VariantRecipe::Single { index: 0 },
+            largest_niche: None,
+            scalar_valid_ranges: Vec::new(),
+        }
+    }
+
+    fn array_layout() -> TypeLayoutRecipe {
+        TypeLayoutRecipe {
+            ty: "[i32; 4]".into(),
+            size: 16,
+            align: 4,
+            uninhabited: false,
+            fields: FieldLayoutRecipe::Array {
+                stride: 4,
+                count: 4,
+            },
+            variants: VariantRecipe::Single { index: 0 },
+            largest_niche: None,
+            scalar_valid_ranges: Vec::new(),
+        }
+    }
+
+    fn empty_layout() -> TypeLayoutRecipe {
+        TypeLayoutRecipe {
+            ty: "!".into(),
+            size: 0,
+            align: 1,
+            uninhabited: true,
+            fields: FieldLayoutRecipe::Primitive,
+            variants: VariantRecipe::Empty,
+            largest_niche: None,
+            scalar_valid_ranges: Vec::new(),
+        }
+    }
+
+    fn enum_niche_layout() -> TypeLayoutRecipe {
+        TypeLayoutRecipe {
+            ty: "Option<&i32>".into(),
+            size: 8,
+            align: 8,
+            uninhabited: false,
+            fields: FieldLayoutRecipe::Arbitrary {
+                offsets: vec![0],
+                memory_order: vec![0],
+            },
+            variants: VariantRecipe::Multiple {
+                tag: ScalarLayoutRecipe {
+                    primitive: "Pointer(AddressSpace(0))".into(),
+                    valid_range: Some(ValidRangeRecipe {
+                        start: 1,
+                        end: u64::MAX.into(),
+                    }),
+                },
+                tag_field: 0,
+                tag_encoding: TagEncodingRecipe::Niche {
+                    untagged_variant: 1,
+                    niche_start: 0,
+                    niche_variants_start: 0,
+                    niche_variants_end: 0,
+                },
+                variants: vec![
+                    VariantLayoutRecipe {
+                        index: 0,
+                        size: 8,
+                        align: 8,
+                        fields: FieldLayoutRecipe::Arbitrary {
+                            offsets: Vec::new(),
+                            memory_order: Vec::new(),
+                        },
+                    },
+                    VariantLayoutRecipe {
+                        index: 1,
+                        size: 8,
+                        align: 8,
+                        fields: FieldLayoutRecipe::Arbitrary {
+                            offsets: vec![0],
+                            memory_order: vec![0],
+                        },
+                    },
+                ],
+            },
+            largest_niche: Some(NicheRecipe {
+                offset: 0,
+                primitive: "Pointer(AddressSpace(0))".into(),
+                valid_range: ValidRangeRecipe {
+                    start: 1,
+                    end: u64::MAX.into(),
+                },
+            }),
+            scalar_valid_ranges: Vec::new(),
         }
     }
 
@@ -1472,6 +1608,153 @@ mod tests {
     }
 
     #[test]
+    fn abi_fixture_matrix_validates_current_boundary() {
+        let mut rust_direct = fn_abi(vec![direct_abi_value(4, 4)], direct_abi_value(4, 4));
+        rust_direct.convention = CallingConventionPlan::Rust;
+
+        let mut fixed_count_mismatch = fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value());
+        fixed_count_mismatch.fixed_count = 2;
+
+        let mut variadic = fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value());
+        variadic.variadic = true;
+
+        let mut can_unwind = fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value());
+        can_unwind.can_unwind = true;
+
+        let mut other_convention = fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value());
+        other_convention.convention = CallingConventionPlan::Other("fastcall".into());
+
+        let fixtures = vec![
+            (
+                "c_direct_void",
+                fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value()),
+                1,
+                false,
+                None,
+            ),
+            (
+                "c_direct_return",
+                fn_abi(
+                    vec![direct_abi_value(4, 4), direct_abi_value(8, 8)],
+                    direct_abi_value(8, 8),
+                ),
+                2,
+                true,
+                None,
+            ),
+            ("rust_direct_return", rust_direct, 1, true, None),
+            (
+                "lowered_arg_count_mismatch",
+                fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value()),
+                2,
+                false,
+                Some("lowered 2"),
+            ),
+            (
+                "fixed_count_mismatch",
+                fixed_count_mismatch,
+                1,
+                false,
+                Some("fixed_count"),
+            ),
+            (
+                "direct_return_missing_destination",
+                fn_abi(Vec::new(), direct_abi_value(4, 4)),
+                0,
+                false,
+                Some("mode does not match"),
+            ),
+            (
+                "ignore_return_with_destination",
+                fn_abi(Vec::new(), ignored_abi_value()),
+                0,
+                true,
+                Some("mode does not match"),
+            ),
+            (
+                "pair_argument",
+                fn_abi(vec![abi_value(AbiPassModePlan::Pair)], ignored_abi_value()),
+                1,
+                false,
+                Some("unsupported Pair"),
+            ),
+            (
+                "pair_return",
+                fn_abi(Vec::new(), abi_value(AbiPassModePlan::Pair)),
+                0,
+                true,
+                Some("unsupported Pair"),
+            ),
+            (
+                "cast_argument",
+                fn_abi(vec![cast_abi_value()], ignored_abi_value()),
+                1,
+                false,
+                Some("unsupported Cast"),
+            ),
+            (
+                "cast_return",
+                fn_abi(Vec::new(), cast_abi_value()),
+                0,
+                true,
+                Some("unsupported Cast"),
+            ),
+            (
+                "indirect_argument",
+                fn_abi(vec![indirect_abi_value()], ignored_abi_value()),
+                1,
+                false,
+                Some("unsupported Indirect"),
+            ),
+            (
+                "indirect_return",
+                fn_abi(Vec::new(), indirect_abi_value()),
+                0,
+                true,
+                Some("unsupported Indirect"),
+            ),
+            (
+                "invalid_argument_alignment",
+                fn_abi(vec![direct_abi_value(8, 3)], ignored_abi_value()),
+                1,
+                false,
+                Some("invalid alignment"),
+            ),
+            (
+                "invalid_return_size_alignment",
+                fn_abi(Vec::new(), direct_abi_value(6, 4)),
+                0,
+                true,
+                Some("not a multiple"),
+            ),
+            ("variadic", variadic, 1, false, Some("variadic")),
+            ("can_unwind", can_unwind, 1, false, Some("unwinding")),
+            (
+                "other_convention",
+                other_convention,
+                1,
+                false,
+                Some("unsupported calling convention"),
+            ),
+        ];
+
+        for (name, abi, lowered_argument_count, has_return_value, expected) in fixtures {
+            let result = validate_fn_abi(name, &abi, lowered_argument_count, has_return_value);
+            match expected {
+                Some(expected) => {
+                    let err = result.expect_err("ABI fixture should be rejected");
+                    assert!(
+                        err.contains(expected),
+                        "fixture `{name}` expected diagnostic containing `{expected}`, got `{err}`"
+                    );
+                }
+                None => result
+                    .unwrap_or_else(|err| panic!("fixture `{name}` should validate, got `{err}`")),
+            }
+        }
+    }
+
+    #[test]
     fn supported_target_descriptor_is_accepted() {
         validate_target(&supported_target()).expect("target descriptor should validate");
     }
@@ -1491,6 +1774,141 @@ mod tests {
     #[test]
     fn struct_type_layout_recipe_is_accepted() {
         validate_type_layout(&struct_layout()).expect("type layout should validate");
+    }
+
+    #[test]
+    fn type_layout_fixture_matrix_validates_current_boundary() {
+        let primitive = TypeLayoutRecipe {
+            ty: "i32".into(),
+            size: 4,
+            align: 4,
+            uninhabited: false,
+            fields: FieldLayoutRecipe::Primitive,
+            variants: VariantRecipe::Single { index: 0 },
+            largest_niche: None,
+            scalar_valid_ranges: vec![scalar_layout()],
+        };
+
+        let mut inhabited_empty = empty_layout();
+        inhabited_empty.uninhabited = false;
+
+        let mut bad_alignment = struct_layout();
+        bad_alignment.align = 0;
+
+        let mut bad_size_alignment = struct_layout();
+        bad_size_alignment.size = 6;
+
+        let mut zero_union = union_layout();
+        zero_union.fields = FieldLayoutRecipe::Union { count: 0 };
+
+        let mut oversized_array = array_layout();
+        oversized_array.fields = FieldLayoutRecipe::Array {
+            stride: 8,
+            count: 4,
+        };
+
+        let mut memory_order_out_of_range = struct_layout();
+        memory_order_out_of_range.fields = FieldLayoutRecipe::Arbitrary {
+            offsets: vec![0, 4],
+            memory_order: vec![0, 2],
+        };
+
+        let mut inverted_niche_range = enum_niche_layout();
+        if let VariantRecipe::Multiple { tag_encoding, .. } = &mut inverted_niche_range.variants {
+            *tag_encoding = TagEncodingRecipe::Niche {
+                untagged_variant: 1,
+                niche_start: 0,
+                niche_variants_start: 2,
+                niche_variants_end: 1,
+            };
+        }
+
+        let mut repeated_variant = enum_niche_layout();
+        if let VariantRecipe::Multiple { variants, .. } = &mut repeated_variant.variants {
+            variants[1].index = variants[0].index;
+        }
+
+        let mut tag_field_out_of_range = enum_niche_layout();
+        if let VariantRecipe::Multiple { tag_field, .. } = &mut tag_field_out_of_range.variants {
+            *tag_field = 2;
+        }
+
+        let mut invalid_variant_alignment = enum_niche_layout();
+        if let VariantRecipe::Multiple { variants, .. } = &mut invalid_variant_alignment.variants {
+            variants[0].align = 3;
+        }
+
+        let mut bad_niche = enum_niche_layout();
+        if let Some(niche) = &mut bad_niche.largest_niche {
+            niche.primitive.clear();
+        }
+
+        let mut bad_scalar = primitive.clone();
+        bad_scalar.scalar_valid_ranges[0].primitive.clear();
+
+        let fixtures = vec![
+            ("primitive", primitive, None),
+            ("struct", struct_layout(), None),
+            ("union", union_layout(), None),
+            ("array", array_layout(), None),
+            ("empty", empty_layout(), None),
+            ("enum_niche", enum_niche_layout(), None),
+            ("inhabited_empty", inhabited_empty, Some("empty variants")),
+            ("bad_alignment", bad_alignment, Some("invalid alignment")),
+            (
+                "bad_size_alignment",
+                bad_size_alignment,
+                Some("not a multiple"),
+            ),
+            ("zero_union", zero_union, Some("union field count is zero")),
+            (
+                "oversized_array",
+                oversized_array,
+                Some("exceed layout size"),
+            ),
+            (
+                "memory_order_out_of_range",
+                memory_order_out_of_range,
+                Some("out of range"),
+            ),
+            (
+                "inverted_niche_range",
+                inverted_niche_range,
+                Some("is inverted"),
+            ),
+            (
+                "repeated_variant",
+                repeated_variant,
+                Some("repeats variant"),
+            ),
+            (
+                "tag_field_out_of_range",
+                tag_field_out_of_range,
+                Some("tag field"),
+            ),
+            (
+                "invalid_variant_alignment",
+                invalid_variant_alignment,
+                Some("invalid alignment"),
+            ),
+            ("bad_niche", bad_niche, Some("empty primitive")),
+            ("bad_scalar", bad_scalar, Some("empty primitive")),
+        ];
+
+        for (name, layout, expected) in fixtures {
+            let result = validate_type_layout(&layout);
+            match expected {
+                Some(expected) => {
+                    let err = result.expect_err("type layout fixture should be rejected");
+                    assert!(
+                        err.contains(expected),
+                        "fixture `{name}` expected diagnostic containing `{expected}`, got `{err}`"
+                    );
+                }
+                None => result
+                    .unwrap_or_else(|err| panic!("fixture `{name}` should validate, got `{err}`")),
+            }
+        }
     }
 
     #[test]

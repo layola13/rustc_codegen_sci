@@ -20,6 +20,8 @@ Baseline: 2026-07-16.
   variadic/unwind flags, and Ignore/Direct/Pair/Cast/Indirect pass modes.
 - [x] Worker ABI boundary tests rejecting Pair/Cast/Indirect before object
   emission.
+- [x] Worker-level ABI/type-layout fixture matrix for the current serialized
+  validation boundary.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI

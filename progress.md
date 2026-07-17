@@ -18,9 +18,11 @@ Baseline: 2026-07-16.
 - `6a169b4`: `PLAN_VERSION = 8` target descriptor serialization covering object
   format, rustc DataLayout, CPU/features, relocation model, and code model,
   with worker-side contract validation.
-- Current worktree: `PLAN_VERSION = 9` `TypeLayoutRecipe` wire schema and
-  backend lowering for size/alignment, scalar valid ranges, fields, variants,
-  and niches.
+- `cb534fe`: `PLAN_VERSION = 9` `TypeLayoutRecipe` wire schema and backend
+  lowering for size/alignment, scalar valid ranges, fields, variants, and
+  niches.
+- Current worktree: worker-level ABI/type-layout fixture matrix for the current
+  validation boundary, plus ABI value size/alignment validation.
 
 ## Current Increment
 
@@ -34,6 +36,12 @@ Baseline: 2026-07-16.
   scalar primitive names.
 - Avoided rustc pretty type printing in layout keys to keep codegen out of
   `trimmed_def_paths` diagnostic state.
+- Added table-driven worker fixtures for supported Direct/Ignore ABI shapes,
+  rejected Pair/Cast/Indirect ABI modes, mismatched lowered argument/return
+  boundaries, malformed ABI size/alignment, and representative primitive,
+  struct, union, array, empty, and niche enum type layouts.
+- ABI value validation now checks every serialized ABI size/alignment pair before
+  mode-specific checks.
 
 ## Current Boundary
 
@@ -42,5 +50,7 @@ serializes the current x86_64 Linux target descriptor/DataLayout, and carries
 monomorphized type layout recipes, but not dereference, load/store,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
 or non-Direct ABI lowering.
+Worker tests now cover the current serialized ABI and layout validation
+boundary, but the real bidirectional C/LLVM ABI fixture suite is still pending.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.
