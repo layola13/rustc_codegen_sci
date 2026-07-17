@@ -19,6 +19,8 @@ Baseline date: 2026-07-16.
 - Worker unit coverage for the ABI boundary: Direct/Ignore is accepted and
   Pair/Cast/Indirect is rejected before object publication.
 - Versioned framed worker RPC with bounded frame sizes.
+- Backend-originated lowering diagnostics annotated with MIR block and
+  statement/terminator context.
 - Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.

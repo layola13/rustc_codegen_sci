@@ -367,21 +367,34 @@ fn lower_function<'tcx>(
     let mut blocks = Vec::with_capacity(mir.basic_blocks.len());
     for (block_id, block) in mir.basic_blocks.iter_enumerated() {
         let mut operations = Vec::new();
-        for statement in &block.statements {
+        for (statement_index, statement) in block.statements.iter().enumerate() {
             match &statement.kind {
                 StatementKind::Assign(assign) => {
                     let (place, rvalue) = &**assign;
-                    operations.extend(lower_assignment(
-                        tcx, instance, mir, &mut state, *place, rvalue,
-                    )?);
+                    operations.extend(
+                        lower_assignment(tcx, instance, mir, &mut state, *place, rvalue).map_err(
+                            |err| {
+                                annotate_mir_statement_error(
+                                    tcx,
+                                    instance,
+                                    block_id,
+                                    statement_index,
+                                    err,
+                                )
+                            },
+                        )?,
+                    );
                 }
                 StatementKind::StorageLive(_)
                 | StatementKind::StorageDead(_)
                 | StatementKind::Nop => {}
                 other => {
-                    return Err(format!(
-                        "{}: unsupported MIR statement `{other:?}`",
-                        tcx.symbol_name(instance).name
+                    return Err(annotate_mir_statement_error(
+                        tcx,
+                        instance,
+                        block_id,
+                        statement_index,
+                        format!("unsupported MIR statement `{other:?}`"),
                     ));
                 }
             }
@@ -396,7 +409,8 @@ fn lower_function<'tcx>(
                 &state,
                 module_state,
                 &block.terminator().kind,
-            )?,
+            )
+            .map_err(|err| annotate_mir_terminator_error(tcx, instance, block_id, err))?,
         });
     }
 
@@ -410,6 +424,44 @@ fn lower_function<'tcx>(
         locals,
         blocks,
     })
+}
+
+fn annotate_mir_statement_error<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    block: BasicBlock,
+    statement_index: usize,
+    err: String,
+) -> String {
+    annotate_mir_error(
+        tcx,
+        instance,
+        block,
+        &format!("statement {statement_index}"),
+        err,
+    )
+}
+
+fn annotate_mir_terminator_error<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    block: BasicBlock,
+    err: String,
+) -> String {
+    annotate_mir_error(tcx, instance, block, "terminator", err)
+}
+
+fn annotate_mir_error<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    block: BasicBlock,
+    site: &str,
+    err: String,
+) -> String {
+    let symbol = tcx.symbol_name(instance).name;
+    let prefix = format!("{symbol}: ");
+    let detail = err.strip_prefix(&prefix).unwrap_or(&err);
+    format!("{symbol}: block {} {site}: {detail}", block.index())
 }
 
 struct LoweringState {

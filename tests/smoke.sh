@@ -33,5 +33,34 @@ compile_fixture() {
     "$OUT/$name-smoke"
 }
 
+compile_fail_fixture() {
+    local name="$1"
+    local expected="$2"
+    local stderr="$OUT/$name.stderr"
+
+    if "$RUSTC" \
+        --sysroot "$SCI_RUST_SYSROOT" \
+        -Zcodegen-backend="$BACKEND" \
+        --crate-type=lib \
+        --edition=2024 \
+        -Cpanic=abort \
+        -Coverflow-checks=on \
+        -Ccodegen-units=1 \
+        --emit=obj="$OUT/$name.o" \
+        "$ROOT/tests/fixtures/$name.rs" \
+        2>"$stderr"
+    then
+        echo "expected fixture $name to fail, but it compiled" >&2
+        return 1
+    fi
+
+    if ! grep -Fq "$expected" "$stderr"; then
+        echo "expected fixture $name stderr to contain: $expected" >&2
+        cat "$stderr" >&2
+        return 1
+    fi
+}
+
 compile_fixture add
 compile_fixture abi_direct
+compile_fail_fixture unsupported_ref "sci_unsupported_ref_i32: block 0 statement 0:"

@@ -32,8 +32,10 @@ Baseline: 2026-07-16.
   operations.
 - `36f7b3c`: scalar raw-pointer field-offset load/store for simple aggregate
   pointees.
-- Current increment: scalar raw-pointer fixed array-index load/store using rustc
-  array layout offsets.
+- `fcdcd59`: scalar raw-pointer fixed array-index load/store using rustc array
+  layout offsets.
+- Current increment: backend-originated lowering errors carry MIR block and
+  statement/terminator context.
 
 ## Current Increment
 
@@ -85,6 +87,11 @@ Baseline: 2026-07-16.
 - Added linked C/Rust smoke coverage for loading, storing, and replacing `i32`
   elements in a C-provided `[i32; 4]` pointer, with generated SA offsets
   `+4`, `+8`, and `+12`.
+- Wrapped backend statement and terminator lowering errors with precise MIR
+  block plus statement index or terminator context, while preserving the
+  existing function-name prefix.
+- Added a compile-fail smoke fixture for unsupported reference rvalues that
+  asserts the backend diagnostic includes `block 0 statement 0`.
 
 ## Current Boundary
 
@@ -101,7 +108,8 @@ boundary, and the smoke suite now has 33 linked Direct scalar ABI cases. The
 broader bidirectional C/LLVM ABI suite still needs non-Direct and aggregate
 coverage.
 Worker failures now have structured RPC diagnostic codes and coarse parsed
-locations, but backend-originated rustc spans and precise MIR statement
-locations are still pending.
+locations. Backend-originated lowering failures now include MIR block and
+statement/terminator context, while rustc spans and fully structured backend
+diagnostic codes are still pending.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.

@@ -28,6 +28,8 @@ Baseline: 2026-07-16.
   narrow-integer boundary values.
 - [x] Wire-level worker diagnostic codes and coarse function/block/local
   diagnostic locations.
+- [x] Backend-originated lowering errors annotated with MIR block and
+  statement/terminator context, covered by compile-fail smoke.
 - [x] `PLAN_VERSION = 10` scalar raw-pointer `Load`/`Store` memory operations.
 - [x] Scalar raw-pointer field-offset load/store for simple `repr(C)` aggregate
   pointees.
@@ -44,6 +46,7 @@ Baseline: 2026-07-16.
 - [x] Add initial linked bidirectional Direct scalar ABI fixtures.
 - [x] Count and execute 20+ linked Direct ABI fixture cases in the smoke gate.
 - [x] Add structured worker diagnostic codes to RPC responses.
+- [x] Add backend MIR block/statement context to lowering diagnostics.
 - [ ] Implement Pair/Cast/Indirect ABI lowering and object emission.
 - [ ] Build 20-30 bidirectional C/LLVM ABI fixtures.
 - [ ] Add structured diagnostic codes and rustc span/MIR locations.
