@@ -2162,15 +2162,7 @@ fn lower_memory_place<'tcx>(
     for projection in rest {
         match projection {
             ProjectionElem::Field(field, field_ty) => {
-                let layout = tcx
-                    .layout_of(ty::TypingEnv::fully_monomorphized().as_query_input(current_ty))
-                    .map_err(|err| {
-                        format!(
-                            "{}: failed to compute field layout for `{}`: {err:?}",
-                            tcx.symbol_name(instance).name,
-                            current_ty
-                        )
-                    })?;
+                let layout = layout_for_memory_projection(tcx, instance, current_ty)?;
                 offset = offset
                     .checked_add(layout.fields.offset(field.as_usize()).bytes())
                     .ok_or_else(|| {
@@ -2180,6 +2172,45 @@ fn lower_memory_place<'tcx>(
                         )
                     })?;
                 current_ty = monomorphize_ty(tcx, instance, *field_ty);
+            }
+            ProjectionElem::ConstantIndex {
+                offset: index,
+                min_length,
+                from_end: false,
+            } => {
+                let index = usize::try_from(*index).map_err(|_| {
+                    format!(
+                        "{}: memory constant index exceeds usize for `{place:?}`",
+                        tcx.symbol_name(instance).name
+                    )
+                })?;
+                if index as u64 >= *min_length {
+                    return Err(format!(
+                        "{}: memory constant index {index} exceeds minimum length {min_length} for `{place:?}`",
+                        tcx.symbol_name(instance).name
+                    ));
+                }
+                let (element_ty, element_offset) =
+                    memory_array_element(tcx, instance, current_ty, index, place)?;
+                offset = offset.checked_add(element_offset).ok_or_else(|| {
+                    format!(
+                        "{}: memory constant index offset overflow for `{place:?}`",
+                        tcx.symbol_name(instance).name
+                    )
+                })?;
+                current_ty = element_ty;
+            }
+            ProjectionElem::Index(index_local) => {
+                let index = constant_memory_index(tcx, instance, mir, *index_local)?;
+                let (element_ty, element_offset) =
+                    memory_array_element(tcx, instance, current_ty, index, place)?;
+                offset = offset.checked_add(element_offset).ok_or_else(|| {
+                    format!(
+                        "{}: memory index offset overflow for `{place:?}`",
+                        tcx.symbol_name(instance).name
+                    )
+                })?;
+                current_ty = element_ty;
             }
             other => {
                 return Err(format!(
@@ -2194,6 +2225,137 @@ fn lower_memory_place<'tcx>(
         ptr: ValueRef::Local(local_id(place.local)),
         offset,
     }))
+}
+
+fn memory_array_element<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    base_ty: Ty<'tcx>,
+    index: usize,
+    place: Place<'tcx>,
+) -> Result<(Ty<'tcx>, u64), String> {
+    let element_ty = match base_ty.kind() {
+        ty::Array(element, _) => *element,
+        _ => {
+            return Err(format!(
+                "{}: array index projection has unsupported base type `{}`",
+                tcx.symbol_name(instance).name,
+                base_ty
+            ));
+        }
+    };
+    let layout = layout_for_memory_projection(tcx, instance, base_ty)?;
+    let FieldsShape::Array { count, .. } = &layout.fields else {
+        return Err(format!(
+            "{}: array index projection has non-array layout for `{}`",
+            tcx.symbol_name(instance).name,
+            base_ty
+        ));
+    };
+    if index as u64 >= *count {
+        return Err(format!(
+            "{}: array index {index} exceeds array length {count} for `{place:?}`",
+            tcx.symbol_name(instance).name
+        ));
+    }
+    Ok((element_ty, layout.fields.offset(index).bytes()))
+}
+
+fn constant_memory_index<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    index_local: Local,
+) -> Result<usize, String> {
+    if index_local == rustc_middle::mir::RETURN_PLACE
+        || index_local.index() != 0 && index_local.index() <= mir.arg_count
+    {
+        return Err(format!(
+            "{}: dynamic memory index local `{index_local:?}` is not supported",
+            tcx.symbol_name(instance).name
+        ));
+    }
+    let index_ty = mir
+        .local_decls
+        .get(index_local)
+        .map(|decl| monomorphize_ty(tcx, instance, decl.ty))
+        .ok_or_else(|| {
+            format!(
+                "{}: memory index local `{index_local:?}` is missing",
+                tcx.symbol_name(instance).name
+            )
+        })?;
+    if !matches!(index_ty.kind(), ty::Uint(ty::UintTy::Usize)) {
+        return Err(format!(
+            "{}: memory index local `{index_local:?}` has unsupported type `{index_ty}`",
+            tcx.symbol_name(instance).name
+        ));
+    }
+
+    let mut value = None;
+    for block in mir.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (place, rvalue) = &**assign;
+            if place.local != index_local || !place.projection.is_empty() {
+                continue;
+            }
+            let Rvalue::Use(Operand::Constant(constant), _) = rvalue else {
+                return Err(format!(
+                    "{}: dynamic memory index local `{index_local:?}` is not supported",
+                    tcx.symbol_name(instance).name
+                ));
+            };
+            if value.is_some() {
+                return Err(format!(
+                    "{}: memory index local `{index_local:?}` has multiple assignments",
+                    tcx.symbol_name(instance).name
+                ));
+            }
+            let bits = constant_usize_bits(tcx, instance, constant)?;
+            value = Some(usize::try_from(bits).map_err(|_| {
+                format!(
+                    "{}: memory index constant exceeds usize",
+                    tcx.symbol_name(instance).name
+                )
+            })?);
+        }
+    }
+    value.ok_or_else(|| {
+        format!(
+            "{}: memory index local `{index_local:?}` has no constant assignment",
+            tcx.symbol_name(instance).name
+        )
+    })
+}
+
+fn constant_usize_bits<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    constant: &ConstOperand<'tcx>,
+) -> Result<u64, String> {
+    let value = lower_constant(tcx, instance, constant)?;
+    match value {
+        ValueRef::Integer { bits, .. } => Ok(bits),
+        ValueRef::Local(_) => unreachable!("constants cannot lower to locals"),
+    }
+}
+
+fn layout_for_memory_projection<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    ty: Ty<'tcx>,
+) -> Result<rustc_middle::ty::layout::TyAndLayout<'tcx>, String> {
+    tcx.layout_of(ty::TypingEnv::fully_monomorphized().as_query_input(ty))
+        .map_err(|err| {
+            format!(
+                "{}: failed to compute memory projection layout for `{}`: {err:?}",
+                tcx.symbol_name(instance).name,
+                ty
+            )
+        })
 }
 
 fn scalar_memory_layout<'tcx>(

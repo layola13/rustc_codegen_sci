@@ -24,6 +24,10 @@ struct FfiPair {
 extern int32_t sci_load_pair_right(const struct FfiPair *pair);
 extern void sci_store_pair_left(struct FfiPair *pair, int32_t value);
 extern int32_t sci_replace_pair_right(struct FfiPair *pair, int32_t value);
+typedef int32_t FfiI32Array4[4];
+extern int32_t sci_load_array_i32_at2(const FfiI32Array4 *values);
+extern void sci_store_array_i32_at1(FfiI32Array4 *values, int32_t value);
+extern int32_t sci_replace_array_i32_at3(FfiI32Array4 *values, int32_t value);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern void sci_unit_noop(int32_t a);
@@ -63,6 +67,8 @@ int main(void) {
     static const int32_t ptr_probe = 42;
     int32_t mutable_probe = 11;
     struct FfiPair pair_probe = { .left = 5, .right = 42 };
+    const FfiI32Array4 array_probe = { 1, 2, 42, 4 };
+    FfiI32Array4 mutable_array_probe = { 5, 11, 17, 42 };
 
     if (sci_add_i32(20, 22) != 42) {
         return 1;
@@ -143,6 +149,19 @@ int main(void) {
     }
     if (pair_probe.right != 77) {
         return 52;
+    }
+    if (sci_load_array_i32_at2(&array_probe) != 42) {
+        return 53;
+    }
+    sci_store_array_i32_at1(&mutable_array_probe, 42);
+    if (mutable_array_probe[1] != 42) {
+        return 54;
+    }
+    if (sci_replace_array_i32_at3(&mutable_array_probe, 77) != 42) {
+        return 55;
+    }
+    if (mutable_array_probe[3] != 77) {
+        return 56;
     }
     if (sci_call_add_i32(11, 31) != 42) {
         return 6;

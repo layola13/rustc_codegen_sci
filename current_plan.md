@@ -23,7 +23,7 @@ No LLVM backend fallback and no `bc2sa` fallback.
 3. Extend structured diagnostics from worker RPC codes/coarse locations to
    backend-originated rustc spans and precise MIR locations.
 4. Extend the new scalar raw-pointer load/store path to stack allocations,
-   array/index projections, and whole-aggregate memory representation.
+   dynamic array/slice projections, and whole-aggregate memory representation.
 5. Add allocation images and relocations for statics, strings, and panic data.
 6. Add direct SAB no-fallback emission from the same canonical plan.
 

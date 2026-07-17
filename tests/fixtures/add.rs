@@ -141,6 +141,27 @@ pub extern "C" fn sci_replace_pair_right(pair: *mut FfiPair, value: i32) -> i32 
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_load_array_i32_at2(values: *const [i32; 4]) -> i32 {
+    unsafe { (*values)[2] }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_store_array_i32_at1(values: *mut [i32; 4], value: i32) {
+    unsafe {
+        (*values)[1] = value;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_replace_array_i32_at3(values: *mut [i32; 4], value: i32) -> i32 {
+    let old = unsafe { (*values)[3] };
+    unsafe {
+        (*values)[3] = value;
+    }
+    old
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_call_add_i32(a: i32, b: i32) -> i32 {
     sci_add_i32(a, b)
 }

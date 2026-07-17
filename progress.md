@@ -30,8 +30,10 @@ Baseline: 2026-07-16.
 - `302c770`: RPC v2 worker diagnostic codes and coarse diagnostic locations.
 - `f8958ae`: `PLAN_VERSION = 10` scalar raw-pointer load/store memory
   operations.
-- Current worktree: scalar raw-pointer field-offset load/store for simple
-  aggregate pointees.
+- `36f7b3c`: scalar raw-pointer field-offset load/store for simple aggregate
+  pointees.
+- Current increment: scalar raw-pointer fixed array-index load/store using rustc
+  array layout offsets.
 
 ## Current Increment
 
@@ -77,14 +79,21 @@ Baseline: 2026-07-16.
   a raw-pointer dereference, enabling `(*p).field` scalar loads/stores.
 - Added linked C/Rust smoke coverage for reading and writing the second field of
   a `repr(C)` two-`i32` aggregate through a raw pointer.
+- Extended memory place lowering to resolve fixed array element offsets after a
+  raw-pointer dereference, including MIR `Index(_temp)` when `_temp` has a
+  single constant `usize` assignment.
+- Added linked C/Rust smoke coverage for loading, storing, and replacing `i32`
+  elements in a C-provided `[i32; 4]` pointer, with generated SA offsets
+  `+4`, `+8`, and `+12`.
 
 ## Current Boundary
 
 The backend supports direct pointer values, serializes rustc ABI evidence,
 serializes the current x86_64 Linux target descriptor/DataLayout, and carries
 monomorphized type layout recipes. It now supports simple scalar raw-pointer
-load/store dereferences and scalar field projections after raw-pointer
-dereference, but not array/index projections, whole-aggregate memory copies,
+load/store dereferences, scalar field projections after raw-pointer dereference,
+and fixed scalar array-index projections after raw-pointer dereference. It does
+not yet support dynamic array indices, slices, whole-aggregate memory copies,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
 or non-Direct ABI lowering.
 Worker tests now cover the current serialized ABI and layout validation
