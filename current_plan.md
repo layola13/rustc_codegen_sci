@@ -1,6 +1,6 @@
 # rustc_codegen_sci Current Plan
 
-Updated: 2026-07-16.
+Updated: 2026-07-17.
 
 ## Active Direction
 
@@ -14,8 +14,8 @@ No LLVM backend fallback and no `bc2sa` fallback.
 
 ## Current Window
 
-1. Land worker/protocol ABI rejection coverage for Pair/Cast/Indirect while
-   backend aggregate lowering still gates real Rust source fixtures earlier.
+1. Add `TypeLayoutRecipe` wire schema and backend lowering for scalar,
+   tuple/struct field layout, variants, and niches.
 2. Build 20-30 ABI fixtures over the serialized rustc `FnAbiPlan`, starting
    with real Rust aggregate arg/return cases once lowering reaches worker
    validation.

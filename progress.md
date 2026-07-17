@@ -15,20 +15,26 @@ Baseline: 2026-07-16.
   `PtrToPtr` copies, and project-local task/progress/current-plan tracking.
 - `f7d864e`: rustc-derived `FnAbiPlan` serialization on defined/extern
   functions and worker validation for currently implemented ABI modes.
+- Current worktree: `PLAN_VERSION = 8` target descriptor serialization covering
+  object format, rustc DataLayout, CPU/features, relocation model, and code
+  model, with worker-side contract validation.
 
 ## Current Increment
 
-- Added worker unit coverage for the ABI validation boundary.
-- Confirmed Direct arguments with Ignore returns validate.
-- Confirmed Pair, Cast, and Indirect argument pass modes hard-error before SA
-  or object emission.
-- Extended `./scripts/test.sh` so worker unit tests run in the standard gate.
-- Verified with pinned rustfmt and `./scripts/test.sh`.
+- Upgraded the canonical protocol to `PLAN_VERSION = 8`.
+- Extended `TargetPlan` beyond triple/pointer/endian to carry object format,
+  rustc DataLayout, CPU, target features, relocation model, and code model.
+- Lowered the rustc session target descriptor into every `SciModulePlan`.
+- Added backend gates for custom target CPU/features that are not implemented
+  by the current x86_64 bring-up slice.
+- Added worker validation for the complete supported target contract and unit
+  coverage for accepted descriptors and DataLayout mismatch rejection.
 
 ## Current Boundary
 
-The backend supports direct pointer values and serializes rustc ABI evidence,
-but not dereference, load/store, provenance-changing casts, nonzero pointer
-constants, allocations, relocations, or non-Direct ABI lowering. Aggregate ABI,
-sysroot, Cargo productization, WASM, direct SAB, and strict proof remain
-incomplete.
+The backend supports direct pointer values, serializes rustc ABI evidence, and
+serializes the current x86_64 Linux target descriptor/DataLayout, but not
+dereference, load/store, provenance-changing casts, nonzero pointer constants,
+allocations, relocations, TypeLayoutRecipe, or non-Direct ABI lowering.
+Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
+remain incomplete.

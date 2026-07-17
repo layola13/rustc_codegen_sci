@@ -74,6 +74,17 @@ impl CodegenBackend for SciCodegenBackend {
             sess.dcx()
                 .fatal("rustc_codegen_sci does not yet support coverage instrumentation");
         }
+        if let Some(cpu) = &sess.opts.cg.target_cpu
+            && cpu != sess.target.cpu.as_ref()
+        {
+            sess.dcx().fatal(format!(
+                "rustc_codegen_sci does not yet support target CPU `{cpu}`"
+            ));
+        }
+        if !sess.opts.cg.target_feature.is_empty() {
+            sess.dcx()
+                .fatal("rustc_codegen_sci does not yet support custom target features");
+        }
     }
 
     fn target_config(&self, _sess: &Session) -> TargetConfig {
@@ -176,12 +187,24 @@ fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
             rustc_commit: RUSTC_COMMIT.to_owned(),
             target: TargetPlan {
                 triple: tcx.sess.target.llvm_target.to_string(),
+                object_format: tcx.sess.target.binary_format.to_string(),
+                data_layout: tcx.sess.target.data_layout.to_string(),
                 pointer_width: u8::try_from(tcx.sess.target.pointer_width)
                     .map_err(|_| "target pointer width does not fit in SCI protocol".to_string())?,
                 endian: match tcx.data_layout.endian {
                     RustcEndian::Little => Endian::Little,
                     RustcEndian::Big => Endian::Big,
                 },
+                cpu: tcx
+                    .sess
+                    .opts
+                    .cg
+                    .target_cpu
+                    .clone()
+                    .unwrap_or_else(|| tcx.sess.target.cpu.to_string()),
+                features: tcx.sess.target.features.to_string(),
+                relocation_model: tcx.sess.relocation_model().to_string(),
+                code_model: tcx.sess.code_model().map(|model| model.to_string()),
             },
             cgu_name: cgu_name.clone(),
             extern_functions: module_state.extern_functions.into_values().collect(),

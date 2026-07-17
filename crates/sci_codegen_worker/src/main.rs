@@ -6,12 +6,18 @@ use std::process::{Command, ExitCode};
 
 use sci_protocol::{
     AbiPassModePlan, BasicBlockPlan, CallingConventionPlan, CompileRequest, CompileResponse,
-    ExternFunctionPlan, FnAbiPlan, FunctionPlan, Operation, PLAN_VERSION, ScalarType,
-    SciModulePlan, SwitchCasePlan, TerminatorPlan, ValueRef, read_frame, write_frame,
+    Endian, ExternFunctionPlan, FnAbiPlan, FunctionPlan, Operation, PLAN_VERSION, ScalarType,
+    SciModulePlan, SwitchCasePlan, TargetPlan, TerminatorPlan, ValueRef, read_frame, write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
 const SUPPORTED_TARGET: &str = "x86_64-unknown-linux-gnu";
+const SUPPORTED_OBJECT_FORMAT: &str = "elf";
+const SUPPORTED_DATA_LAYOUT: &str =
+    "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128";
+const SUPPORTED_CPU: &str = "x86-64";
+const SUPPORTED_FEATURES: &str = "";
+const SUPPORTED_RELOCATION_MODEL: &str = "pic";
 
 fn main() -> ExitCode {
     match run() {
@@ -115,15 +121,7 @@ fn validate_module(module: &SciModulePlan) -> Result<(), String> {
             module.rustc_commit, SUPPORTED_RUSTC_COMMIT
         ));
     }
-    if module.target.triple != SUPPORTED_TARGET
-        || module.target.pointer_width != 64
-        || module.target.endian != sci_protocol::Endian::Little
-    {
-        return Err(format!(
-            "unsupported target contract: {} / {}-bit / {:?}",
-            module.target.triple, module.target.pointer_width, module.target.endian
-        ));
-    }
+    validate_target(&module.target)?;
     if module.functions.is_empty() {
         return Err("module contains no functions".into());
     }
@@ -154,6 +152,58 @@ fn validate_module(module: &SciModulePlan) -> Result<(), String> {
     }
     for function in &module.functions {
         validate_function(function, &functions, &extern_functions)?;
+    }
+    Ok(())
+}
+
+fn validate_target(target: &TargetPlan) -> Result<(), String> {
+    if target.triple != SUPPORTED_TARGET {
+        return Err(format!(
+            "unsupported target triple `{}`; expected `{SUPPORTED_TARGET}`",
+            target.triple
+        ));
+    }
+    if target.object_format != SUPPORTED_OBJECT_FORMAT {
+        return Err(format!(
+            "unsupported target object format `{}`; expected `{SUPPORTED_OBJECT_FORMAT}`",
+            target.object_format
+        ));
+    }
+    if target.data_layout != SUPPORTED_DATA_LAYOUT {
+        return Err(format!(
+            "unsupported target data layout `{}`; expected `{SUPPORTED_DATA_LAYOUT}`",
+            target.data_layout
+        ));
+    }
+    if target.pointer_width != 64 || target.endian != Endian::Little {
+        return Err(format!(
+            "unsupported target scalar contract: {}-bit / {:?}",
+            target.pointer_width, target.endian
+        ));
+    }
+    if target.cpu != SUPPORTED_CPU {
+        return Err(format!(
+            "unsupported target CPU `{}`; expected `{SUPPORTED_CPU}`",
+            target.cpu
+        ));
+    }
+    if target.features != SUPPORTED_FEATURES {
+        return Err(format!(
+            "unsupported target features `{}`; expected `{SUPPORTED_FEATURES}`",
+            target.features
+        ));
+    }
+    if target.relocation_model != SUPPORTED_RELOCATION_MODEL {
+        return Err(format!(
+            "unsupported relocation model `{}`; expected `{SUPPORTED_RELOCATION_MODEL}`",
+            target.relocation_model
+        ));
+    }
+    if target.code_model.is_some() {
+        return Err(format!(
+            "unsupported code model `{:?}`; expected target default",
+            target.code_model
+        ));
     }
     Ok(())
 }
@@ -1164,6 +1214,20 @@ mod tests {
         }
     }
 
+    fn supported_target() -> TargetPlan {
+        TargetPlan {
+            triple: SUPPORTED_TARGET.into(),
+            object_format: SUPPORTED_OBJECT_FORMAT.into(),
+            data_layout: SUPPORTED_DATA_LAYOUT.into(),
+            pointer_width: 64,
+            endian: Endian::Little,
+            cpu: SUPPORTED_CPU.into(),
+            features: SUPPORTED_FEATURES.into(),
+            relocation_model: SUPPORTED_RELOCATION_MODEL.into(),
+            code_model: None,
+        }
+    }
+
     fn assert_abi_error_contains(abi: FnAbiPlan, expected: &str) {
         let err = validate_fn_abi("test_fn", &abi, abi.arguments.len(), false)
             .expect_err("ABI should be rejected");
@@ -1181,6 +1245,23 @@ mod tests {
         );
 
         validate_fn_abi("test_fn", &abi, 1, false).expect("direct ABI should validate");
+    }
+
+    #[test]
+    fn supported_target_descriptor_is_accepted() {
+        validate_target(&supported_target()).expect("target descriptor should validate");
+    }
+
+    #[test]
+    fn target_data_layout_mismatch_is_rejected_before_emission() {
+        let mut target = supported_target();
+        target.data_layout = "e-p:64:64".into();
+
+        let err = validate_target(&target).expect_err("target descriptor should be rejected");
+        assert!(
+            err.contains("unsupported target data layout"),
+            "expected data-layout diagnostic, got `{err}`"
+        );
     }
 
     #[test]

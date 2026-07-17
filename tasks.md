@@ -12,6 +12,8 @@ Baseline: 2026-07-16.
 - [x] Local scalar tuple/struct construction, projection, and copy/move.
 - [x] Direct raw-pointer ABI values for local/extern calls and returns.
 - [x] Null raw-pointer constants, pointer `Eq`/`Ne`, and thin `PtrToPtr` copy.
+- [x] Complete target descriptor and rustc DataLayout serialization with
+  worker-side contract validation.
 - [x] `FnAbiPlan` wire schema carrying rustc layout, calling convention,
   variadic/unwind flags, and Ignore/Direct/Pair/Cast/Indirect pass modes.
 - [x] Worker ABI boundary tests rejecting Pair/Cast/Indirect before object
@@ -20,7 +22,7 @@ Baseline: 2026-07-16.
 
 ## M0 Protocol And ABI
 
-- [ ] Serialize complete target descriptor and rustc DataLayout.
+- [x] Serialize complete target descriptor and rustc DataLayout.
 - [ ] Add `TypeLayoutRecipe` with size, alignment, fields, variants, and niches.
 - [x] Add `FnAbiPlan` with Ignore, Direct, Pair, Cast, and Indirect pass modes.
 - [x] Add worker-level negative tests for unsupported non-Direct ABI modes.

@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 1;
-pub const PLAN_VERSION: u16 = 7;
+pub const PLAN_VERSION: u16 = 8;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -302,8 +302,14 @@ pub enum TerminatorPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetPlan {
     pub triple: String,
+    pub object_format: String,
+    pub data_layout: String,
     pub pointer_width: u8,
     pub endian: Endian,
+    pub cpu: String,
+    pub features: String,
+    pub relocation_model: String,
+    pub code_model: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1077,8 +1083,20 @@ impl WireDecode for TerminatorPlan {
 impl WireEncode for TargetPlan {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.string(&self.triple)?;
+        encoder.string(&self.object_format)?;
+        encoder.string(&self.data_layout)?;
         encoder.u8(self.pointer_width);
         encoder.u8(self.endian as u8);
+        encoder.string(&self.cpu)?;
+        encoder.string(&self.features)?;
+        encoder.string(&self.relocation_model)?;
+        match &self.code_model {
+            Some(code_model) => {
+                encoder.u8(1);
+                encoder.string(code_model)?;
+            }
+            None => encoder.u8(0),
+        }
         Ok(())
     }
 }
@@ -1086,16 +1104,32 @@ impl WireEncode for TargetPlan {
 impl WireDecode for TargetPlan {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
         let triple = decoder.string()?;
+        let object_format = decoder.string()?;
+        let data_layout = decoder.string()?;
         let pointer_width = decoder.u8()?;
         let endian = match decoder.u8()? {
             1 => Endian::Little,
             2 => Endian::Big,
             tag => return Err(ProtocolError::InvalidTag("endianness", tag)),
         };
+        let cpu = decoder.string()?;
+        let features = decoder.string()?;
+        let relocation_model = decoder.string()?;
+        let code_model = match decoder.u8()? {
+            0 => None,
+            1 => Some(decoder.string()?),
+            tag => return Err(ProtocolError::InvalidTag("optional target code model", tag)),
+        };
         Ok(Self {
             triple,
+            object_format,
+            data_layout,
             pointer_width,
             endian,
+            cpu,
+            features,
+            relocation_model,
+            code_model,
         })
     }
 }
@@ -1280,8 +1314,16 @@ mod tests {
                 rustc_commit: "fcbe7917".into(),
                 target: TargetPlan {
                     triple: "x86_64-unknown-linux-gnu".into(),
+                    object_format: "elf".into(),
+                    data_layout:
+                        "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+                            .into(),
                     pointer_width: 64,
                     endian: Endian::Little,
+                    cpu: "x86-64".into(),
+                    features: String::new(),
+                    relocation_model: "pic".into(),
+                    code_model: None,
                 },
                 cgu_name: "add".into(),
                 extern_functions: vec![
@@ -1383,6 +1425,14 @@ mod tests {
             read_frame::<_, CompileRequest>(&bytes[..]).unwrap(),
             request
         );
+    }
+
+    #[test]
+    fn optional_target_code_model_round_trip_is_lossless() {
+        let mut request = sample_request();
+        request.module.target.code_model = Some("small".into());
+        let bytes = encode_payload(&request).unwrap();
+        assert_eq!(decode_payload::<CompileRequest>(&bytes).unwrap(), request);
     }
 
     #[test]

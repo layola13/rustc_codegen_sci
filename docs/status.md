@@ -8,13 +8,15 @@ Baseline date: 2026-07-16.
 - Rustc-private backend dylib entry point.
 - Early target, panic, LTO, coverage, crate type, and float capability gates.
 - Canonical SCI lowering-plan data model.
+- Complete x86_64 Linux target descriptor serialization, including object
+  format, rustc DataLayout, CPU/features, relocation model, and code model.
 - rustc-derived `FnAbiPlan` metadata serialized for defined and extern
   functions, including layout, calling convention, variadic/unwind flags, and
   Ignore/Direct/Pair/Cast/Indirect pass mode tags.
 - Worker unit coverage for the ABI boundary: Direct/Ignore is accepted and
   Pair/Cast/Indirect is rejected before object publication.
 - Versioned framed worker RPC with bounded frame sizes.
-- Worker-side target and plan validation.
+- Worker-side target descriptor and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.
 - Rustc CGU traversal, MIR lowering, worker invocation, and object artifact
@@ -34,7 +36,7 @@ Baseline date: 2026-07-16.
 
 | Area | Current support |
 | --- | --- |
-| Target | `x86_64-unknown-linux-gnu` |
+| Target | `x86_64-unknown-linux-gnu` with explicit ELF object format, rustc DataLayout, `x86-64` CPU, empty target features, PIC relocation model, and default code model |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
 | Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted, Pair/Cast/Indirect are serialized but rejected until implemented; pointer deref/load/store is not supported yet |
