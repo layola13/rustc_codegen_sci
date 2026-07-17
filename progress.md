@@ -36,8 +36,10 @@ Baseline: 2026-07-16.
   layout offsets.
 - `f143446`: backend-originated lowering errors carry MIR block and
   statement/terminator context.
-- Current increment: backend-originated fatal diagnostics are classified with
-  stable `SCI_BACKEND_*` codes.
+- `a093e1a`: backend-originated fatal diagnostics are classified with stable
+  `SCI_BACKEND_*` codes.
+- Current increment: backend-originated MIR statement/terminator lowering errors
+  emit rustc source spans.
 
 ## Current Increment
 
@@ -99,6 +101,11 @@ Baseline: 2026-07-16.
   second wrapper.
 - Extended the compile-fail smoke fixture to assert
   `SCI_BACKEND_MIR_UNSUPPORTED` for unsupported MIR lowering.
+- Promoted backend diagnostics from plain strings to an internal diagnostic
+  record that can carry a rustc `Span`.
+- Emitted statement and terminator lowering failures through `span_fatal` using
+  MIR `SourceInfo`, and extended the compile-fail smoke fixture to assert the
+  source file and line are present.
 
 ## Current Boundary
 
@@ -116,8 +123,8 @@ broader bidirectional C/LLVM ABI suite still needs non-Direct and aggregate
 coverage.
 Worker failures now have structured RPC diagnostic codes and coarse parsed
 locations. Backend-originated lowering failures now include MIR block and
-statement/terminator context plus stable fatal diagnostic codes, while rustc
-spans and protocol-level structured backend diagnostic payloads are still
-pending.
+statement/terminator context, stable fatal diagnostic codes, and rustc source
+spans for statement/terminator lowering failures. Protocol-level structured
+backend diagnostic payloads are still pending.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.

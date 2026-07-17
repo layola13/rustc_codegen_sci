@@ -21,7 +21,7 @@ No LLVM backend fallback and no `bc2sa` fallback.
 2. Implement the first Pair/Cast/Indirect C ABI fixtures and aggregate return/arg
    lowering against rustc `FnAbi` evidence.
 3. Extend structured diagnostics from worker RPC codes/coarse locations and
-   backend fatal codes plus MIR block/statement contexts to rustc spans and
+   backend fatal codes plus MIR block/statement contexts/source spans to
    protocol-level backend diagnostic payloads.
 4. Extend the new scalar raw-pointer load/store path to stack allocations,
    dynamic array/slice projections, and whole-aggregate memory representation.

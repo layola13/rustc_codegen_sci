@@ -23,6 +23,8 @@ Baseline date: 2026-07-16.
   statement/terminator context.
 - Backend-originated fatal diagnostics classified with stable `SCI_BACKEND_*`
   codes.
+- Backend-originated MIR statement/terminator lowering diagnostics emitted with
+  rustc source spans.
 - Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.

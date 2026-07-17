@@ -32,6 +32,8 @@ Baseline: 2026-07-16.
   statement/terminator context, covered by compile-fail smoke.
 - [x] Backend-originated fatal diagnostics classified with stable
   `SCI_BACKEND_*` codes.
+- [x] Backend-originated MIR statement/terminator lowering errors emitted with
+  rustc source spans.
 - [x] `PLAN_VERSION = 10` scalar raw-pointer `Load`/`Store` memory operations.
 - [x] Scalar raw-pointer field-offset load/store for simple `repr(C)` aggregate
   pointees.
@@ -50,9 +52,11 @@ Baseline: 2026-07-16.
 - [x] Add structured worker diagnostic codes to RPC responses.
 - [x] Add backend MIR block/statement context to lowering diagnostics.
 - [x] Add stable backend diagnostic codes to rustc fatal messages.
+- [x] Add rustc source spans for backend MIR statement/terminator lowering
+  diagnostics.
 - [ ] Implement Pair/Cast/Indirect ABI lowering and object emission.
 - [ ] Build 20-30 bidirectional C/LLVM ABI fixtures.
-- [ ] Add structured diagnostic codes and rustc span/MIR locations.
+- [ ] Add protocol-level structured backend diagnostic payloads.
 
 ## M1 Trusted Backend MVP
 

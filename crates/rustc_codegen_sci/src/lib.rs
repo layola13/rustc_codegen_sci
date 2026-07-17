@@ -32,7 +32,7 @@ use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::{self, Instance, Ty, TyCtxt};
 use rustc_session::Session;
 use rustc_session::config::{CrateType, OutFileName, OutputFilenames, OutputType};
-use rustc_span::Symbol;
+use rustc_span::{Span, Symbol};
 use rustc_target::callconv::{FnAbi, PassMode};
 use rustc_target::spec::PanicStrategy;
 use sci_protocol::{
@@ -122,7 +122,7 @@ impl CodegenBackend for SciCodegenBackend {
     fn codegen_crate<'tcx>(&self, tcx: TyCtxt<'tcx>) -> Box<dyn Any> {
         let modules = match codegen_crate(tcx) {
             Ok(modules) => modules,
-            Err(err) => tcx.dcx().fatal(format_backend_rejection(&err)),
+            Err(err) => emit_backend_diagnostic(tcx, err),
         };
         Box::new(SciOngoingCodegen { modules })
     }
@@ -146,7 +146,43 @@ struct SciOngoingCodegen {
     modules: CompiledModules,
 }
 
-fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
+struct BackendDiagnostic {
+    message: String,
+    span: Option<Span>,
+}
+
+impl BackendDiagnostic {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            span: None,
+        }
+    }
+
+    fn with_span(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            message: message.into(),
+            span: Some(span),
+        }
+    }
+}
+
+impl From<String> for BackendDiagnostic {
+    fn from(message: String) -> Self {
+        Self::new(message)
+    }
+}
+
+fn emit_backend_diagnostic(tcx: TyCtxt<'_>, diagnostic: BackendDiagnostic) -> ! {
+    let message = format_backend_rejection(&diagnostic.message);
+    if let Some(span) = diagnostic.span {
+        tcx.dcx().span_fatal(span, message)
+    } else {
+        tcx.dcx().fatal(message)
+    }
+}
+
+fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, BackendDiagnostic> {
     let partitions = tcx.collect_and_partition_mono_items(());
     let outputs = tcx.output_filenames(());
     let sa_output_dir = match outputs.path(OutputType::Object) {
@@ -167,24 +203,24 @@ fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
                     functions.push(lower_function(tcx, instance, &mut module_state)?);
                 }
                 MonoItem::Static(def_id) => {
-                    return Err(format!(
+                    return Err(BackendDiagnostic::new(format!(
                         "rustc_codegen_sci does not yet support static mono item `{}`",
                         tcx.def_path_str(def_id)
-                    ));
+                    )));
                 }
                 MonoItem::GlobalAsm(item_id) => {
-                    return Err(format!(
+                    return Err(BackendDiagnostic::new(format!(
                         "rustc_codegen_sci does not yet support global_asm item `{:?}`",
                         item_id
-                    ));
+                    )));
                 }
             }
         }
 
         if functions.is_empty() {
-            return Err(format!(
+            return Err(BackendDiagnostic::new(format!(
                 "rustc_codegen_sci produced no supported functions for CGU `{cgu_name}`"
-            ));
+            )));
         }
 
         let module = SciModulePlan {
@@ -289,7 +325,7 @@ fn lower_function<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
     module_state: &mut ModuleLoweringState,
-) -> Result<FunctionPlan, String> {
+) -> Result<FunctionPlan, BackendDiagnostic> {
     let mir = tcx.instance_mir(instance.def);
 
     let mut state = LoweringState::new(mir.local_decls.len());
@@ -304,44 +340,44 @@ fn lower_function<'tcx>(
             });
         } else if is_unit_ty(ty) {
             if local.index() != 0 && local.index() <= mir.arg_count {
-                return Err(format!(
+                return Err(BackendDiagnostic::new(format!(
                     "{}: unit function arguments are not supported by the current ABI plan",
                     tcx.symbol_name(instance).name
-                ));
+                )));
             }
         } else if is_empty_struct_ty(ty) {
             if local == rustc_middle::mir::RETURN_PLACE
                 || local.index() != 0 && local.index() <= mir.arg_count
             {
-                return Err(format!(
+                return Err(BackendDiagnostic::new(format!(
                     "{}: zero-sized struct function ABI is not yet supported",
                     tcx.symbol_name(instance).name
-                ));
+                )));
             }
         } else if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
             if local == rustc_middle::mir::RETURN_PLACE {
-                return Err(format!(
+                return Err(BackendDiagnostic::new(format!(
                     "{}: aggregate return ABI is not yet supported",
                     tcx.symbol_name(instance).name
-                ));
+                )));
             }
             if local.index() != 0 && local.index() <= mir.arg_count {
-                return Err(format!(
+                return Err(BackendDiagnostic::new(format!(
                     "{}: aggregate argument ABI is not yet supported",
                     tcx.symbol_name(instance).name
-                ));
+                )));
             }
             for (field, ty) in field_types.into_iter().enumerate() {
                 let id = state.synthetic_tuple_field(local, field);
                 locals.push(LocalPlan { id, ty });
             }
         } else {
-            return Err(format!(
+            return Err(BackendDiagnostic::new(format!(
                 "{}: local {:?} has unsupported type `{}`",
                 tcx.symbol_name(instance).name,
                 local,
                 ty
-            ));
+            )));
         }
     }
 
@@ -379,6 +415,7 @@ fn lower_function<'tcx>(
                                     instance,
                                     block_id,
                                     statement_index,
+                                    statement.source_info.span,
                                     err,
                                 )
                             },
@@ -394,6 +431,7 @@ fn lower_function<'tcx>(
                         instance,
                         block_id,
                         statement_index,
+                        statement.source_info.span,
                         format!("unsupported MIR statement `{other:?}`"),
                     ));
                 }
@@ -410,7 +448,15 @@ fn lower_function<'tcx>(
                 module_state,
                 &block.terminator().kind,
             )
-            .map_err(|err| annotate_mir_terminator_error(tcx, instance, block_id, err))?,
+            .map_err(|err| {
+                annotate_mir_terminator_error(
+                    tcx,
+                    instance,
+                    block_id,
+                    block.terminator().source_info.span,
+                    err,
+                )
+            })?,
         });
     }
 
@@ -431,13 +477,15 @@ fn annotate_mir_statement_error<'tcx>(
     instance: Instance<'tcx>,
     block: BasicBlock,
     statement_index: usize,
+    span: Span,
     err: String,
-) -> String {
+) -> BackendDiagnostic {
     annotate_mir_error(
         tcx,
         instance,
         block,
         &format!("statement {statement_index}"),
+        span,
         err,
     )
 }
@@ -446,9 +494,10 @@ fn annotate_mir_terminator_error<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
     block: BasicBlock,
+    span: Span,
     err: String,
-) -> String {
-    annotate_mir_error(tcx, instance, block, "terminator", err)
+) -> BackendDiagnostic {
+    annotate_mir_error(tcx, instance, block, "terminator", span, err)
 }
 
 fn annotate_mir_error<'tcx>(
@@ -456,12 +505,16 @@ fn annotate_mir_error<'tcx>(
     instance: Instance<'tcx>,
     block: BasicBlock,
     site: &str,
+    span: Span,
     err: String,
-) -> String {
+) -> BackendDiagnostic {
     let symbol = tcx.symbol_name(instance).name;
     let prefix = format!("{symbol}: ");
     let detail = err.strip_prefix(&prefix).unwrap_or(&err);
-    format!("{symbol}: block {} {site}: {detail}", block.index())
+    BackendDiagnostic::with_span(
+        format!("{symbol}: block {} {site}: {detail}", block.index()),
+        span,
+    )
 }
 
 struct LoweringState {

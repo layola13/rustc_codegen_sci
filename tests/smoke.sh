@@ -35,7 +35,7 @@ compile_fixture() {
 
 compile_fail_fixture() {
     local name="$1"
-    local expected="$2"
+    shift
     local stderr="$OUT/$name.stderr"
 
     if "$RUSTC" \
@@ -54,14 +54,18 @@ compile_fail_fixture() {
         return 1
     fi
 
-    if ! grep -Fq "$expected" "$stderr"; then
-        echo "expected fixture $name stderr to contain: $expected" >&2
-        cat "$stderr" >&2
-        return 1
-    fi
+    local expected
+    for expected in "$@"; do
+        if ! grep -Fq "$expected" "$stderr"; then
+            echo "expected fixture $name stderr to contain: $expected" >&2
+            cat "$stderr" >&2
+            return 1
+        fi
+    done
 }
 
 compile_fixture add
 compile_fixture abi_direct
 compile_fail_fixture unsupported_ref \
-    "rustc_codegen_sci backend rejected module [SCI_BACKEND_MIR_UNSUPPORTED]: sci_unsupported_ref_i32: block 0 statement 0:"
+    "rustc_codegen_sci backend rejected module [SCI_BACKEND_MIR_UNSUPPORTED]: sci_unsupported_ref_i32: block 0 statement 0:" \
+    "tests/fixtures/unsupported_ref.rs:5:"
