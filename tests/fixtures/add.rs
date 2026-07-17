@@ -93,6 +93,27 @@ pub extern "C" fn sci_null_ptr() -> *const i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_load_i32(value: *const i32) -> i32 {
+    unsafe { *value }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_store_i32(slot: *mut i32, value: i32) {
+    unsafe {
+        *slot = value;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_replace_i32(slot: *mut i32, value: i32) -> i32 {
+    let old = unsafe { *slot };
+    unsafe {
+        *slot = value;
+    }
+    old
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_call_add_i32(a: i32, b: i32) -> i32 {
     sci_add_i32(a, b)
 }

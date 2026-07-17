@@ -28,6 +28,7 @@ Baseline: 2026-07-16.
   narrow-integer boundary values.
 - [x] Wire-level worker diagnostic codes and coarse function/block/local
   diagnostic locations.
+- [x] `PLAN_VERSION = 10` scalar raw-pointer `Load`/`Store` memory operations.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI
@@ -45,7 +46,8 @@ Baseline: 2026-07-16.
 
 ## M1 Trusted Backend MVP
 
-- [ ] Add pointer load/store and target-qualified memory operation plans.
+- [x] Add scalar raw-pointer load/store and target-qualified memory operation
+  plans.
 - [ ] Add stack allocations with size/alignment validation.
 - [ ] Add indirect calls with explicit function signatures.
 - [ ] Add aggregate argument/return ABI, including sret/byval.

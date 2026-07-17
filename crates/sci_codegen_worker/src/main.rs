@@ -86,6 +86,8 @@ fn classify_diagnostic_code(diagnostic: &str) -> &'static str {
         || diagnostic.contains("code model")
     {
         "SCI_TARGET_UNSUPPORTED"
+    } else if diagnostic.contains(" load ") || diagnostic.contains(" store ") {
+        "SCI_MEMORY_INVALID"
     } else if diagnostic.contains("type layout")
         || diagnostic.contains("field")
         || diagnostic.contains("variant")
@@ -704,11 +706,12 @@ fn compute_block_entries(
                 continue;
             };
             for operation in &block.operations {
-                let dst = operation_destination(operation);
-                if !locals.contains_key(&dst) {
-                    return Err(format!("operation writes missing local {dst}"));
+                if let Some(dst) = operation_destination(operation) {
+                    if !locals.contains_key(&dst) {
+                        return Err(format!("operation writes missing local {dst}"));
+                    }
+                    exit.insert(dst);
                 }
-                exit.insert(dst);
             }
             if let Some(dst) = terminator_destination(&block.terminator) {
                 if !locals.contains_key(&dst) {
@@ -833,6 +836,54 @@ fn validate_operation(
             }
             defined.insert(*dst);
         }
+        Operation::Load {
+            dst,
+            ptr,
+            offset: _,
+            ty,
+            align,
+        } => {
+            validate_value(locals, defined, ptr)?;
+            validate_destination(locals, *dst)?;
+            validate_memory_align(function, "load", *align)?;
+            if value_type(locals, ptr)? != ScalarType::Ptr {
+                return Err(format!("{} load source must be ptr", function.symbol));
+            }
+            if locals[dst] != *ty {
+                return Err(format!(
+                    "{} load destination type mismatch",
+                    function.symbol
+                ));
+            }
+            defined.insert(*dst);
+        }
+        Operation::Store {
+            ptr,
+            offset: _,
+            value,
+            ty,
+            align,
+        } => {
+            validate_value(locals, defined, ptr)?;
+            validate_value(locals, defined, value)?;
+            validate_memory_align(function, "store", *align)?;
+            if value_type(locals, ptr)? != ScalarType::Ptr {
+                return Err(format!("{} store destination must be ptr", function.symbol));
+            }
+            if value_type(locals, value)? != *ty {
+                return Err(format!("{} store value type mismatch", function.symbol));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_memory_align(function: &FunctionPlan, op: &str, align: u64) -> Result<(), String> {
+    if align == 0 || !align.is_power_of_two() {
+        return Err(format!(
+            "{} {op} has invalid alignment {align}",
+            function.symbol
+        ));
     }
     Ok(())
 }
@@ -1034,12 +1085,14 @@ fn validate_destination(locals: &BTreeMap<u32, ScalarType>, dst: u32) -> Result<
     Ok(())
 }
 
-fn operation_destination(operation: &Operation) -> u32 {
+fn operation_destination(operation: &Operation) -> Option<u32> {
     match operation {
         Operation::Copy { dst, .. }
         | Operation::Binary { dst, .. }
         | Operation::Compare { dst, .. }
-        | Operation::Cast { dst, .. } => *dst,
+        | Operation::Cast { dst, .. }
+        | Operation::Load { dst, .. } => Some(*dst),
+        Operation::Store { .. } => None,
     }
 }
 
@@ -1169,7 +1222,9 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
             .ok_or_else(|| format!("{} block {} is unreachable", function.symbol, block.id))?;
         for operation in &block.operations {
             emit_operation(out, &locals, operation);
-            defined.insert(operation_destination(operation));
+            if let Some(dst) = operation_destination(operation) {
+                defined.insert(dst);
+            }
         }
         emit_terminator(out, function, block.id, &defined, &block.terminator);
     }
@@ -1230,6 +1285,36 @@ fn emit_operation(out: &mut String, locals: &BTreeMap<u32, ScalarType>, operatio
             out.push_str(op.sa_name());
             out.push(' ');
             emit_value(out, src);
+            out.push_str(" as ");
+            out.push_str(ty.sa_name());
+            out.push('\n');
+        }
+        Operation::Load {
+            dst,
+            ptr,
+            offset,
+            ty,
+            align: _,
+        } => {
+            out.push_str("    ");
+            out.push_str(&local_name(*dst));
+            out.push_str(" = load ");
+            emit_address(out, ptr, *offset);
+            out.push_str(" as ");
+            out.push_str(ty.sa_name());
+            out.push('\n');
+        }
+        Operation::Store {
+            ptr,
+            offset,
+            value,
+            ty,
+            align: _,
+        } => {
+            out.push_str("    store ");
+            emit_address(out, ptr, *offset);
+            out.push_str(", ");
+            emit_value(out, value);
             out.push_str(" as ");
             out.push_str(ty.sa_name());
             out.push('\n');
@@ -1363,6 +1448,12 @@ fn emit_value(out: &mut String, value: &ValueRef) {
     }
 }
 
+fn emit_address(out: &mut String, ptr: &ValueRef, offset: u64) {
+    emit_value(out, ptr);
+    out.push('+');
+    out.push_str(&offset.to_string());
+}
+
 fn local_name(local: u32) -> String {
     format!("v{local}")
 }
@@ -1479,8 +1570,8 @@ fn switch_otherwise_label(function: &FunctionPlan, block_id: u32) -> String {
 mod tests {
     use super::*;
     use sci_protocol::{
-        AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan, ValidRangeRecipe,
-        VariantLayoutRecipe,
+        AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan, LocalPlan,
+        ValidRangeRecipe, VariantLayoutRecipe,
     };
 
     fn abi_value(mode: AbiPassModePlan) -> AbiValuePlan {
@@ -1683,6 +1774,78 @@ mod tests {
         assert!(
             err.contains(expected),
             "expected diagnostic containing `{expected}`, got `{err}`"
+        );
+    }
+
+    fn memory_function(operations: Vec<Operation>) -> FunctionPlan {
+        FunctionPlan {
+            symbol: "memory_fn".into(),
+            abi: fn_abi(vec![direct_abi_value(8, 8)], direct_abi_value(4, 4)),
+            argument_locals: vec![1],
+            return_local: Some(0),
+            locals: vec![
+                LocalPlan {
+                    id: 0,
+                    ty: ScalarType::I32,
+                },
+                LocalPlan {
+                    id: 1,
+                    ty: ScalarType::Ptr,
+                },
+                LocalPlan {
+                    id: 2,
+                    ty: ScalarType::I32,
+                },
+            ],
+            blocks: vec![BasicBlockPlan {
+                id: 0,
+                operations,
+                terminator: TerminatorPlan::Return,
+            }],
+        }
+    }
+
+    #[test]
+    fn load_store_memory_operations_are_accepted() {
+        let function = memory_function(vec![
+            Operation::Load {
+                dst: 2,
+                ptr: ValueRef::Local(1),
+                offset: 0,
+                ty: ScalarType::I32,
+                align: 4,
+            },
+            Operation::Store {
+                ptr: ValueRef::Local(1),
+                offset: 0,
+                value: ValueRef::Local(2),
+                ty: ScalarType::I32,
+                align: 4,
+            },
+            Operation::Copy {
+                dst: 0,
+                src: ValueRef::Local(2),
+            },
+        ]);
+
+        validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
+            .expect("load/store memory function should validate");
+    }
+
+    #[test]
+    fn malformed_memory_operation_is_rejected() {
+        let function = memory_function(vec![Operation::Load {
+            dst: 2,
+            ptr: ValueRef::Local(1),
+            offset: 0,
+            ty: ScalarType::I32,
+            align: 3,
+        }]);
+        let err = validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
+            .expect_err("malformed load should be rejected");
+        assert!(
+            err.contains("invalid alignment"),
+            "expected alignment diagnostic, got `{err}`"
         );
     }
 

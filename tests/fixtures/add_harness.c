@@ -14,6 +14,9 @@ extern const int32_t *sci_call_host_identity_ptr(const int32_t *value);
 extern int32_t sci_ptr_eq(const int32_t *lhs, const int32_t *rhs);
 extern int32_t sci_ptr_is_null(const int32_t *value);
 extern const int32_t *sci_null_ptr(void);
+extern int32_t sci_load_i32(const int32_t *value);
+extern void sci_store_i32(int32_t *slot, int32_t value);
+extern int32_t sci_replace_i32(int32_t *slot, int32_t value);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern void sci_unit_noop(int32_t a);
@@ -51,6 +54,7 @@ const int32_t *sci_host_identity_ptr(const int32_t *value) {
 
 int main(void) {
     static const int32_t ptr_probe = 42;
+    int32_t mutable_probe = 11;
 
     if (sci_add_i32(20, 22) != 42) {
         return 1;
@@ -105,6 +109,19 @@ int main(void) {
     }
     if (sci_null_ptr() != (const int32_t *)0) {
         return 44;
+    }
+    if (sci_load_i32(&ptr_probe) != 42) {
+        return 45;
+    }
+    sci_store_i32(&mutable_probe, 42);
+    if (mutable_probe != 42) {
+        return 46;
+    }
+    if (sci_replace_i32(&mutable_probe, 77) != 42) {
+        return 47;
+    }
+    if (mutable_probe != 77) {
+        return 48;
     }
     if (sci_call_add_i32(11, 31) != 42) {
         return 6;

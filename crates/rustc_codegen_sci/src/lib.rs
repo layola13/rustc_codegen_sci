@@ -1005,6 +1005,20 @@ fn lower_assignment<'tcx>(
         );
     }
 
+    if let Some(ptr) = lower_deref_place_as_ptr(place)? {
+        let (ty, _size, align) = scalar_memory_layout(tcx, instance, place_ty)?;
+        let temp = state.allocate_temp(ty);
+        let mut operations = vec![lower_rvalue(tcx, instance, mir, state, temp, rvalue)?];
+        operations.push(Operation::Store {
+            ptr,
+            offset: 0,
+            value: ValueRef::Local(temp),
+            ty,
+            align,
+        });
+        return Ok(operations);
+    }
+
     if scalar_aggregate_field_types(tcx, place_ty).is_some() {
         return lower_aggregate_assignment(tcx, instance, mir, state, place, rvalue);
     }
@@ -1181,6 +1195,23 @@ fn lower_rvalue<'tcx>(
     rvalue: &Rvalue<'tcx>,
 ) -> Result<Operation, String> {
     match rvalue {
+        Rvalue::Use(Operand::Copy(place) | Operand::Move(place), _) => {
+            if let Some(ptr) = lower_deref_place_as_ptr(*place)? {
+                let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
+                let (ty, _size, align) = scalar_memory_layout(tcx, instance, place_ty)?;
+                return Ok(Operation::Load {
+                    dst,
+                    ptr,
+                    offset: 0,
+                    ty,
+                    align,
+                });
+            }
+            Ok(Operation::Copy {
+                dst,
+                src: lower_operand(tcx, instance, mir, state, &Operand::Copy(*place))?,
+            })
+        }
         Rvalue::Use(operand, _) => Ok(Operation::Copy {
             dst,
             src: lower_operand(tcx, instance, mir, state, operand)?,
@@ -2098,6 +2129,46 @@ fn lower_place_as_value(state: &LoweringState, place: Place<'_>) -> Result<Value
     Err(format!(
         "rustc_codegen_sci does not yet support projected place `{place:?}`"
     ))
+}
+
+fn lower_deref_place_as_ptr(place: Place<'_>) -> Result<Option<ValueRef>, String> {
+    if place.projection.len() == 1 && matches!(place.projection[0], ProjectionElem::Deref) {
+        return Ok(Some(ValueRef::Local(local_id(place.local))));
+    }
+    if place
+        .projection
+        .iter()
+        .any(|projection| matches!(projection, ProjectionElem::Deref))
+    {
+        return Err(format!(
+            "rustc_codegen_sci does not yet support deref place with additional projections `{place:?}`"
+        ));
+    }
+    Ok(None)
+}
+
+fn scalar_memory_layout<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    ty: Ty<'tcx>,
+) -> Result<(ScalarType, u64, u64), String> {
+    let scalar = scalar_type_for_ty(ty).ok_or_else(|| {
+        format!(
+            "{}: memory operation has unsupported type `{}`",
+            tcx.symbol_name(instance).name,
+            ty
+        )
+    })?;
+    let layout = tcx
+        .layout_of(ty::TypingEnv::fully_monomorphized().as_query_input(ty))
+        .map_err(|err| {
+            format!(
+                "{}: failed to compute memory layout for `{}`: {err:?}",
+                tcx.symbol_name(instance).name,
+                ty
+            )
+        })?;
+    Ok((scalar, layout.size.bytes(), layout.align.abi.bytes()))
 }
 
 fn monomorphize_ty<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>, ty: Ty<'tcx>) -> Ty<'tcx> {

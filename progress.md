@@ -27,8 +27,9 @@ Baseline: 2026-07-16.
   exported functions and SCI-to-C extern calls.
 - `544be0e`: auditable 33-case Direct scalar ABI suite with signed and unsigned
   narrow-integer boundary values.
-- Current worktree: RPC v2 worker diagnostic codes and coarse diagnostic
-  locations.
+- `302c770`: RPC v2 worker diagnostic codes and coarse diagnostic locations.
+- Current worktree: `PLAN_VERSION = 10` scalar raw-pointer load/store memory
+  operations.
 
 ## Current Increment
 
@@ -63,12 +64,20 @@ Baseline: 2026-07-16.
 - Classified worker rejections into ABI, target, layout, CFG, IO, object
   emission, and generic rejection codes, and included those fields in backend
   rustc fatal messages.
+- Added canonical scalar `Load`/`Store` memory operations with pointer value,
+  byte offset, scalar type, and alignment.
+- Lowered simple raw-pointer dereference reads and writes (`*p` and `*p = v`)
+  for scalar pointee types, with worker validation and SA `load`/`store`
+  emission.
+- Extended the smoke harness with C-provided `i32` pointer load, store, and
+  replace cases that compile through `rustc_codegen_sci`, link, and execute.
 
 ## Current Boundary
 
 The backend supports direct pointer values, serializes rustc ABI evidence,
 serializes the current x86_64 Linux target descriptor/DataLayout, and carries
-monomorphized type layout recipes, but not dereference, load/store,
+monomorphized type layout recipes. It now supports simple scalar raw-pointer
+load/store dereferences, but not projected/aggregate dereferences,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
 or non-Direct ABI lowering.
 Worker tests now cover the current serialized ABI and layout validation

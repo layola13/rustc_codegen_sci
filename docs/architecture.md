@@ -4,7 +4,7 @@
 rustc frontend / borrowck / monomorphization
   -> rustc_codegen_sci dylib
   -> canonical SciModulePlan
-  -> framed SCI worker RPC v1
+  -> framed SCI worker RPC v2
   -> SA text generated from the canonical plan
   -> SCI Referee and native emitter
   -> relocatable object
@@ -34,4 +34,3 @@ rustc frontend / borrowck / monomorphization
 The selected emitter either returns a verified object or a structured error.
 It never calls rustc's LLVM backend and never routes through LLVM bitcode or
 `bc2sa`.
-

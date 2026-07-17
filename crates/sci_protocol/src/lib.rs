@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 2;
-pub const PLAN_VERSION: u16 = 9;
+pub const PLAN_VERSION: u16 = 10;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -164,6 +164,20 @@ pub enum Operation {
         op: CastOp,
         src: ValueRef,
         ty: ScalarType,
+    },
+    Load {
+        dst: u32,
+        ptr: ValueRef,
+        offset: u64,
+        ty: ScalarType,
+        align: u64,
+    },
+    Store {
+        ptr: ValueRef,
+        offset: u64,
+        value: ValueRef,
+        ty: ScalarType,
+        align: u64,
     },
 }
 
@@ -756,6 +770,34 @@ impl WireEncode for Operation {
                 src.encode(encoder)?;
                 ty.encode(encoder)?;
             }
+            Self::Load {
+                dst,
+                ptr,
+                offset,
+                ty,
+                align,
+            } => {
+                encoder.u8(5);
+                encoder.u32(*dst);
+                ptr.encode(encoder)?;
+                encoder.u64(*offset);
+                ty.encode(encoder)?;
+                encoder.u64(*align);
+            }
+            Self::Store {
+                ptr,
+                offset,
+                value,
+                ty,
+                align,
+            } => {
+                encoder.u8(6);
+                ptr.encode(encoder)?;
+                encoder.u64(*offset);
+                value.encode(encoder)?;
+                ty.encode(encoder)?;
+                encoder.u64(*align);
+            }
         }
         Ok(())
     }
@@ -831,6 +873,20 @@ impl WireDecode for Operation {
                     ty: ScalarType::decode(decoder)?,
                 })
             }
+            5 => Ok(Self::Load {
+                dst: decoder.u32()?,
+                ptr: ValueRef::decode(decoder)?,
+                offset: decoder.u64()?,
+                ty: ScalarType::decode(decoder)?,
+                align: decoder.u64()?,
+            }),
+            6 => Ok(Self::Store {
+                ptr: ValueRef::decode(decoder)?,
+                offset: decoder.u64()?,
+                value: ValueRef::decode(decoder)?,
+                ty: ScalarType::decode(decoder)?,
+                align: decoder.u64()?,
+            }),
             tag => Err(ProtocolError::InvalidTag("operation", tag)),
         }
     }
@@ -1879,6 +1935,33 @@ mod tests {
                                 terminator: TerminatorPlan::Return,
                             },
                         ],
+                    },
+                    FunctionPlan {
+                        symbol: "load_i32".into(),
+                        abi: direct_abi(vec![(8, 8)], Some((4, 4))),
+                        argument_locals: vec![1],
+                        return_local: Some(0),
+                        locals: vec![
+                            LocalPlan {
+                                id: 0,
+                                ty: ScalarType::I32,
+                            },
+                            LocalPlan {
+                                id: 1,
+                                ty: ScalarType::Ptr,
+                            },
+                        ],
+                        blocks: vec![BasicBlockPlan {
+                            id: 0,
+                            operations: vec![Operation::Load {
+                                dst: 0,
+                                ptr: ValueRef::Local(1),
+                                offset: 0,
+                                ty: ScalarType::I32,
+                                align: 4,
+                            }],
+                            terminator: TerminatorPlan::Return,
+                        }],
                     },
                 ],
             },
