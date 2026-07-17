@@ -133,6 +133,9 @@ Baseline: 2026-07-16.
 - Added matching single-field signed and unsigned 8/16/32/64-bit Cast aggregate
   argument lowering and linked C smoke coverage; aggregate argument locals now
   map to their synthetic scalar field local.
+- Extended extern call lowering so SCI-to-C calls can pass and receive the same
+  narrow Cast aggregate shapes through scalar call operands/destinations, with
+  linked host C smoke coverage.
 
 ## Current Boundary
 
@@ -148,8 +151,9 @@ single-field signed and unsigned 8/16/32/64-bit Cast aggregate arguments and
 returns; unsupported Pair/Indirect and unsupported Cast cases are rejected in
 backend FnAbi preflight before MIR lowering/object emission.
 Worker tests now cover the current serialized ABI and layout validation
-boundary, and the smoke suite now has 33 linked Direct scalar ABI cases. The
-broader bidirectional C/LLVM ABI suite still needs non-Direct and aggregate
+boundary, and the smoke suite now has 33 linked Direct scalar ABI cases plus
+bidirectional narrow Cast aggregate argument/return coverage. The broader
+C/LLVM ABI suite still needs Pair/Indirect, sret/byval, and wider aggregate
 coverage.
 Worker failures now have structured RPC diagnostic codes and coarse parsed
 locations. Backend-originated lowering failures now include MIR block and

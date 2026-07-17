@@ -739,7 +739,7 @@ fn lower_terminator<'tcx>(
             let callee_symbol = tcx.symbol_name(callee).name.to_string();
             let args = args
                 .iter()
-                .map(|arg| lower_operand(tcx, instance, mir, state, &arg.node))
+                .map(|arg| lower_call_argument(tcx, instance, mir, state, &arg.node))
                 .collect::<Result<Vec<_>, _>>()?;
             if tcx.is_foreign_item(callee.def_id()) {
                 let extern_function = lower_extern_function(
@@ -853,19 +853,35 @@ fn lower_extern_function<'tcx>(
         ));
     }
 
+    let fn_abi = lower_fn_abi_plan(tcx, callee)?;
     let mut argument_types = Vec::with_capacity(signature_input_count);
-    for input in signature_inputs {
+    for (index, input) in signature_inputs.iter().enumerate() {
         let ty = monomorphize_ty(tcx, caller, *input);
         module_state.register_type_layout(tcx, ty)?;
-        let scalar = scalar_type_for_ty(ty).ok_or_else(|| {
-            format!(
-                "{}: extern callee `{}` argument has unsupported type `{}`",
-                tcx.symbol_name(caller).name,
-                tcx.def_path_str(callee.def_id()),
-                ty
-            )
-        })?;
-        argument_types.push(scalar);
+        if let Some(scalar) = scalar_type_for_ty(ty) {
+            argument_types.push(scalar);
+        } else {
+            let field_types = scalar_aggregate_field_types(tcx, ty).ok_or_else(|| {
+                format!(
+                    "{}: extern callee `{}` argument has unsupported type `{}`",
+                    tcx.symbol_name(caller).name,
+                    tcx.def_path_str(callee.def_id()),
+                    ty
+                )
+            })?;
+            let abi_argument = &fn_abi.arguments[index];
+            if !is_supported_cast_abi_value(abi_argument)
+                || field_types.len() != 1
+                || scalar_type_size_bytes(field_types[0]) != Some(abi_argument.size)
+            {
+                return Err(format!(
+                    "{}: extern callee `{}` aggregate argument ABI is not yet supported",
+                    tcx.symbol_name(caller).name,
+                    tcx.def_path_str(callee.def_id())
+                ));
+            }
+            argument_types.push(field_types[0]);
+        }
     }
 
     let sig_return_ty = monomorphize_ty(tcx, caller, sig.output().skip_binder());
@@ -882,15 +898,7 @@ fn lower_extern_function<'tcx>(
             ));
         }
         None
-    } else {
-        let return_type = scalar_type_for_ty(destination_ty).ok_or_else(|| {
-            format!(
-                "{}: extern callee `{}` return destination has unsupported type `{}`",
-                tcx.symbol_name(caller).name,
-                tcx.def_path_str(callee.def_id()),
-                destination_ty
-            )
-        })?;
+    } else if let Some(return_type) = scalar_type_for_ty(destination_ty) {
         if scalar_type_for_ty(sig_return_ty) != Some(return_type) {
             return Err(format!(
                 "{}: extern callee `{}` return type does not match destination",
@@ -899,11 +907,48 @@ fn lower_extern_function<'tcx>(
             ));
         }
         Some(return_type)
+    } else {
+        let destination_field_types = scalar_aggregate_field_types(tcx, destination_ty)
+            .ok_or_else(|| {
+                format!(
+                    "{}: extern callee `{}` return destination has unsupported type `{}`",
+                    tcx.symbol_name(caller).name,
+                    tcx.def_path_str(callee.def_id()),
+                    destination_ty
+                )
+            })?;
+        let signature_field_types =
+            scalar_aggregate_field_types(tcx, sig_return_ty).ok_or_else(|| {
+                format!(
+                    "{}: extern callee `{}` return type has unsupported type `{}`",
+                    tcx.symbol_name(caller).name,
+                    tcx.def_path_str(callee.def_id()),
+                    sig_return_ty
+                )
+            })?;
+        if destination_field_types != signature_field_types {
+            return Err(format!(
+                "{}: extern callee `{}` return type does not match destination",
+                tcx.symbol_name(caller).name,
+                tcx.def_path_str(callee.def_id())
+            ));
+        }
+        if !is_supported_cast_abi_value(&fn_abi.return_value)
+            || destination_field_types.len() != 1
+            || scalar_type_size_bytes(destination_field_types[0]) != Some(fn_abi.return_value.size)
+        {
+            return Err(format!(
+                "{}: extern callee `{}` aggregate return ABI is not yet supported",
+                tcx.symbol_name(caller).name,
+                tcx.def_path_str(callee.def_id())
+            ));
+        }
+        Some(destination_field_types[0])
     };
 
     Ok(ExternFunctionPlan {
         symbol: tcx.symbol_name(callee).name.to_string(),
-        abi: lower_fn_abi_plan(tcx, callee)?,
+        abi: fn_abi,
         argument_types,
         return_type,
     })
@@ -2246,6 +2291,41 @@ fn lower_operand<'tcx>(
     })
 }
 
+fn lower_call_argument<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    state: &LoweringState,
+    operand: &Operand<'tcx>,
+) -> Result<ValueRef, String> {
+    let ty = monomorphize_ty(tcx, instance, operand.ty(&mir.local_decls, tcx));
+    if scalar_aggregate_field_types(tcx, ty).is_some() {
+        let place = match operand {
+            Operand::Copy(place) | Operand::Move(place) => *place,
+            _ => {
+                return Err(format!(
+                    "{}: aggregate call argument must be a place operand",
+                    tcx.symbol_name(instance).name
+                ));
+            }
+        };
+        if !place.projection.is_empty() {
+            return Err(format!(
+                "{}: aggregate call argument must be an unprojected local",
+                tcx.symbol_name(instance).name
+            ));
+        }
+        let local = state.tuple_field(place.local, 0).ok_or_else(|| {
+            format!(
+                "{}: aggregate call argument field is missing a synthetic local",
+                tcx.symbol_name(instance).name
+            )
+        })?;
+        return Ok(ValueRef::Local(local));
+    }
+    lower_operand(tcx, instance, mir, state, operand)
+}
+
 fn lower_constant<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
@@ -2308,6 +2388,13 @@ fn lower_call_destination<'tcx>(
     let ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
     if is_unit_ty(ty) {
         Ok(None)
+    } else if scalar_aggregate_field_types(tcx, ty).is_some() {
+        state.tuple_field(place.local, 0).map(Some).ok_or_else(|| {
+            format!(
+                "{}: aggregate call destination field is missing a synthetic local",
+                tcx.symbol_name(instance).name
+            )
+        })
     } else {
         lower_destination(state, place).map(Some)
     }

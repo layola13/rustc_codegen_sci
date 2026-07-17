@@ -21,9 +21,9 @@ Baseline date: 2026-07-16.
   cases are rejected before object publication.
 - Backend compile-fail smoke coverage for real rustc Pair/Cast/Indirect
   pass-mode rejection before MIR lowering/object emission.
-- Narrow Cast ABI argument/return lowering for single-field signed and unsigned
-  8/16/32/64-bit aggregates passed in one integer register, with linked C smoke
-  coverage.
+- Narrow bidirectional Cast ABI argument/return lowering for single-field signed
+  and unsigned 8/16/32/64-bit aggregates passed in one integer register, with
+  linked C smoke coverage.
 - Versioned framed worker RPC with bounded frame sizes.
 - Backend-originated lowering diagnostics annotated with MIR block and
   statement/terminator context.
@@ -58,7 +58,7 @@ Baseline date: 2026-07-16.
 | Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted; single-field signed and unsigned 8/16/32/64-bit Cast aggregate arguments/returns are lowered through scalar registers; Pair/Indirect and unsupported Cast cases are serialized but rejected until implemented; backend preflight rejects unsupported non-Direct definitions before MIR lowering; simple scalar raw-pointer deref/load/store, scalar field projection, and fixed scalar array-index projection are supported |
 | Type Layout | monomorphized rustc `LayoutData` recipes for local and extern signature types, including size/alignment, fields, variants, niches, and scalar valid ranges |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
-| MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls with unreachable unwind |
+| MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls, plus narrow Cast aggregate `extern "C"` calls, with unreachable unwind |
 | MIR rvalues | `Use`, scalar raw-pointer load/store including simple field offsets and fixed array element offsets, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |
 | Values | integer/bool/raw-pointer locals, integer/bool constants, and null pointer constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |

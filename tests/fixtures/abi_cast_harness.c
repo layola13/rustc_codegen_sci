@@ -48,6 +48,86 @@ extern int32_t sci_abi_cast_arg_i32(struct OneI32 value);
 extern uint32_t sci_abi_cast_arg_u32(struct OneU32 value);
 extern int64_t sci_abi_cast_arg_i64(struct OneI64 value);
 extern uint64_t sci_abi_cast_arg_u64(struct OneU64 value);
+extern int8_t sci_abi_call_host_cast_arg_i8(int8_t value);
+extern uint8_t sci_abi_call_host_cast_arg_u8(uint8_t value);
+extern int16_t sci_abi_call_host_cast_arg_i16(int16_t value);
+extern uint16_t sci_abi_call_host_cast_arg_u16(uint16_t value);
+extern int32_t sci_abi_call_host_cast_arg_i32(int32_t value);
+extern uint32_t sci_abi_call_host_cast_arg_u32(uint32_t value);
+extern int64_t sci_abi_call_host_cast_arg_i64(int64_t value);
+extern uint64_t sci_abi_call_host_cast_arg_u64(uint64_t value);
+extern int8_t sci_abi_call_host_cast_return_i8(int8_t value);
+extern uint8_t sci_abi_call_host_cast_return_u8(uint8_t value);
+extern int16_t sci_abi_call_host_cast_return_i16(int16_t value);
+extern uint16_t sci_abi_call_host_cast_return_u16(uint16_t value);
+extern int32_t sci_abi_call_host_cast_return_i32(int32_t value);
+extern uint32_t sci_abi_call_host_cast_return_u32(uint32_t value);
+extern int64_t sci_abi_call_host_cast_return_i64(int64_t value);
+extern uint64_t sci_abi_call_host_cast_return_u64(uint64_t value);
+
+int8_t sci_host_cast_arg_i8(struct OneI8 value) {
+    return value.value;
+}
+
+uint8_t sci_host_cast_arg_u8(struct OneU8 value) {
+    return value.value;
+}
+
+int16_t sci_host_cast_arg_i16(struct OneI16 value) {
+    return value.value;
+}
+
+uint16_t sci_host_cast_arg_u16(struct OneU16 value) {
+    return value.value;
+}
+
+int32_t sci_host_cast_arg_i32(struct OneI32 value) {
+    return value.value;
+}
+
+uint32_t sci_host_cast_arg_u32(struct OneU32 value) {
+    return value.value;
+}
+
+int64_t sci_host_cast_arg_i64(struct OneI64 value) {
+    return value.value;
+}
+
+uint64_t sci_host_cast_arg_u64(struct OneU64 value) {
+    return value.value;
+}
+
+struct OneI8 sci_host_cast_return_i8(int8_t value) {
+    return (struct OneI8){ .value = value };
+}
+
+struct OneU8 sci_host_cast_return_u8(uint8_t value) {
+    return (struct OneU8){ .value = value };
+}
+
+struct OneI16 sci_host_cast_return_i16(int16_t value) {
+    return (struct OneI16){ .value = value };
+}
+
+struct OneU16 sci_host_cast_return_u16(uint16_t value) {
+    return (struct OneU16){ .value = value };
+}
+
+struct OneI32 sci_host_cast_return_i32(int32_t value) {
+    return (struct OneI32){ .value = value };
+}
+
+struct OneU32 sci_host_cast_return_u32(uint32_t value) {
+    return (struct OneU32){ .value = value };
+}
+
+struct OneI64 sci_host_cast_return_i64(int64_t value) {
+    return (struct OneI64){ .value = value };
+}
+
+struct OneU64 sci_host_cast_return_u64(uint64_t value) {
+    return (struct OneU64){ .value = value };
+}
 
 int main(void) {
     struct OneI8 result_i8 = sci_abi_cast_return_i8((int8_t)-42);
@@ -113,6 +193,54 @@ int main(void) {
     }
     if (sci_abi_cast_arg_u64((struct OneU64){ .value = UINT64_C(0xfedcba9876543210) }) != UINT64_C(0xfedcba9876543210)) {
         return 16;
+    }
+    if (sci_abi_call_host_cast_arg_i8((int8_t)-39) != (int8_t)-39) {
+        return 17;
+    }
+    if (sci_abi_call_host_cast_arg_u8(UINT8_C(0xd1)) != UINT8_C(0xd1)) {
+        return 18;
+    }
+    if (sci_abi_call_host_cast_arg_i16((int16_t)-4321) != (int16_t)-4321) {
+        return 19;
+    }
+    if (sci_abi_call_host_cast_arg_u16(UINT16_C(0xd00d)) != UINT16_C(0xd00d)) {
+        return 20;
+    }
+    if (sci_abi_call_host_cast_arg_i32(INT32_C(-7654321)) != INT32_C(-7654321)) {
+        return 21;
+    }
+    if (sci_abi_call_host_cast_arg_u32(UINT32_C(0xd00d1234)) != UINT32_C(0xd00d1234)) {
+        return 22;
+    }
+    if (sci_abi_call_host_cast_arg_i64(-INT64_C(7654321012345)) != -INT64_C(7654321012345)) {
+        return 23;
+    }
+    if (sci_abi_call_host_cast_arg_u64(UINT64_C(0xd00dba9876543210)) != UINT64_C(0xd00dba9876543210)) {
+        return 24;
+    }
+    if (sci_abi_call_host_cast_return_i8((int8_t)-61) != (int8_t)-61) {
+        return 25;
+    }
+    if (sci_abi_call_host_cast_return_u8(UINT8_C(0xe3)) != UINT8_C(0xe3)) {
+        return 26;
+    }
+    if (sci_abi_call_host_cast_return_i16((int16_t)-6789) != (int16_t)-6789) {
+        return 27;
+    }
+    if (sci_abi_call_host_cast_return_u16(UINT16_C(0xe11e)) != UINT16_C(0xe11e)) {
+        return 28;
+    }
+    if (sci_abi_call_host_cast_return_i32(INT32_C(-1357911)) != INT32_C(-1357911)) {
+        return 29;
+    }
+    if (sci_abi_call_host_cast_return_u32(UINT32_C(0xe11e1234)) != UINT32_C(0xe11e1234)) {
+        return 30;
+    }
+    if (sci_abi_call_host_cast_return_i64(-INT64_C(1357911012345)) != -INT64_C(1357911012345)) {
+        return 31;
+    }
+    if (sci_abi_call_host_cast_return_u64(UINT64_C(0xe11eba9876543210)) != UINT64_C(0xe11eba9876543210)) {
+        return 32;
     }
     return 0;
 }
