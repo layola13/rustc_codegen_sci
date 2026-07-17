@@ -365,10 +365,7 @@ fn lower_function<'tcx>(
             }
         } else if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
             if local == rustc_middle::mir::RETURN_PLACE {
-                if !is_supported_cast_abi_value(&fn_abi.return_value)
-                    || field_types.len() != 1
-                    || scalar_type_size_bytes(field_types[0]) != Some(fn_abi.return_value.size)
-                {
+                if !is_supported_aggregate_return_abi(&field_types, &fn_abi.return_value) {
                     return Err(BackendDiagnostic::with_location(
                         format!(
                             "{}: aggregate return ABI is not yet supported",
@@ -455,29 +452,33 @@ fn lower_function<'tcx>(
         instance,
         mir.local_decls[rustc_middle::mir::RETURN_PLACE].ty,
     );
-    let return_local = if is_unit_ty(return_ty) {
-        None
-    } else if scalar_aggregate_field_types(tcx, return_ty).is_some() {
-        Some(
-            state
-                .tuple_field(rustc_middle::mir::RETURN_PLACE, 0)
-                .ok_or_else(|| {
-                    BackendDiagnostic::with_location(
-                        format!(
-                            "{}: aggregate return field is missing a synthetic local",
-                            tcx.symbol_name(instance).name
-                        ),
-                        Some(DiagnosticLocation {
-                            function: Some(tcx.symbol_name(instance).name.to_string()),
-                            block: None,
-                            local: Some(0),
-                        }),
-                        None,
-                    )
-                })?,
-        )
+    let return_locals = if is_unit_ty(return_ty) {
+        Vec::new()
+    } else if let Some(field_types) = scalar_aggregate_field_types(tcx, return_ty) {
+        field_types
+            .iter()
+            .enumerate()
+            .map(|(field, _)| {
+                state
+                    .tuple_field(rustc_middle::mir::RETURN_PLACE, field)
+                    .ok_or_else(|| {
+                        BackendDiagnostic::with_location(
+                            format!(
+                                "{}: aggregate return field {field} is missing a synthetic local",
+                                tcx.symbol_name(instance).name
+                            ),
+                            Some(DiagnosticLocation {
+                                function: Some(tcx.symbol_name(instance).name.to_string()),
+                                block: None,
+                                local: Some(0),
+                            }),
+                            None,
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
     } else {
-        Some(local_id(rustc_middle::mir::RETURN_PLACE))
+        vec![local_id(rustc_middle::mir::RETURN_PLACE)]
     };
 
     let mut blocks = Vec::with_capacity(mir.basic_blocks.len());
@@ -558,7 +559,7 @@ fn lower_function<'tcx>(
         symbol: tcx.symbol_name(instance).name.to_string(),
         abi: fn_abi,
         argument_locals,
-        return_local,
+        return_locals,
         locals,
         blocks,
     })
@@ -590,7 +591,10 @@ fn validate_backend_fn_abi_boundary<'tcx>(
             ));
         }
     }
-    if is_supported_cast_abi_value(&abi.return_value) {
+    if is_supported_cast_abi_value(&abi.return_value)
+        || is_supported_wide_cast_abi_argument_value(&abi.return_value)
+        || matches!(abi.return_value.mode, AbiPassModePlan::Pair)
+    {
         return Ok(());
     }
     if let Some(mode) = unsupported_backend_pass_mode(&abi.return_value.mode) {
@@ -682,6 +686,10 @@ fn is_supported_aggregate_argument_abi(field_types: &[ScalarType], value: &AbiVa
     }
     is_supported_pair_abi_argument(field_types, value)
         || is_supported_wide_cast_abi_argument(field_types, value)
+}
+
+fn is_supported_aggregate_return_abi(field_types: &[ScalarType], value: &AbiValuePlan) -> bool {
+    is_supported_aggregate_argument_abi(field_types, value)
 }
 
 fn unsupported_backend_pass_mode(mode: &AbiPassModePlan) -> Option<&'static str> {
@@ -981,7 +989,7 @@ fn lower_terminator<'tcx>(
                 return Ok(TerminatorPlan::Call {
                     callee: callee_symbol,
                     args,
-                    destination: lower_call_destination(tcx, instance, mir, state, *destination)?,
+                    destinations: lower_call_destinations(tcx, instance, mir, state, *destination)?,
                     target: block_id_id(target),
                 });
             }
@@ -998,7 +1006,7 @@ fn lower_terminator<'tcx>(
                     lowered_arg_count,
                     destination,
                 )?,
-                destination: lower_call_destination(tcx, instance, mir, state, *destination)?,
+                destinations: lower_call_destinations(tcx, instance, mir, state, *destination)?,
                 target: block_id_id(target),
             })
         }
@@ -1140,7 +1148,7 @@ fn lower_extern_function<'tcx>(
                 destination_ty
             ));
         }
-        None
+        Vec::new()
     } else if let Some(return_type) = scalar_type_for_ty(destination_ty) {
         if scalar_type_for_ty(sig_return_ty) != Some(return_type) {
             return Err(format!(
@@ -1149,7 +1157,7 @@ fn lower_extern_function<'tcx>(
                 tcx.def_path_str(callee.def_id())
             ));
         }
-        Some(return_type)
+        vec![return_type]
     } else {
         let destination_field_types = scalar_aggregate_field_types(tcx, destination_ty)
             .ok_or_else(|| {
@@ -1176,24 +1184,21 @@ fn lower_extern_function<'tcx>(
                 tcx.def_path_str(callee.def_id())
             ));
         }
-        if !is_supported_cast_abi_value(&fn_abi.return_value)
-            || destination_field_types.len() != 1
-            || scalar_type_size_bytes(destination_field_types[0]) != Some(fn_abi.return_value.size)
-        {
+        if !is_supported_aggregate_return_abi(&destination_field_types, &fn_abi.return_value) {
             return Err(format!(
                 "{}: extern callee `{}` aggregate return ABI is not yet supported",
                 tcx.symbol_name(caller).name,
                 tcx.def_path_str(callee.def_id())
             ));
         }
-        Some(destination_field_types[0])
+        destination_field_types
     };
 
     Ok(ExternFunctionPlan {
         symbol: tcx.symbol_name(callee).name.to_string(),
         abi: fn_abi,
         argument_types,
-        return_type,
+        return_types: return_type,
     })
 }
 
@@ -1264,7 +1269,7 @@ fn lower_indirect_call_signature<'tcx>(
     module_state.register_type_layout(tcx, sig_return_ty)?;
     let destination_ty = monomorphize_ty(tcx, caller, destination.ty(&mir.local_decls, tcx).ty);
     module_state.register_type_layout(tcx, destination_ty)?;
-    let return_type = if is_unit_ty(sig_return_ty) {
+    let return_types = if is_unit_ty(sig_return_ty) {
         if !is_unit_ty(destination_ty) {
             return Err(format!(
                 "{}: void function pointer call returns into non-unit destination `{}`",
@@ -1272,7 +1277,7 @@ fn lower_indirect_call_signature<'tcx>(
                 destination_ty
             ));
         }
-        None
+        Vec::new()
     } else {
         let return_type = scalar_type_for_ty(destination_ty).ok_or_else(|| {
             format!(
@@ -1287,12 +1292,12 @@ fn lower_indirect_call_signature<'tcx>(
                 tcx.symbol_name(caller).name
             ));
         }
-        Some(return_type)
+        vec![return_type]
     };
 
     Ok(CallSignaturePlan {
         argument_types,
-        return_type,
+        return_types,
     })
 }
 
@@ -2790,25 +2795,31 @@ fn stack_slot_for_place(state: &LoweringState, place: Place<'_>) -> Option<Stack
         .flatten()
 }
 
-fn lower_call_destination<'tcx>(
+fn lower_call_destinations<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
     mir: &Body<'tcx>,
     state: &LoweringState,
     place: Place<'tcx>,
-) -> Result<Option<u32>, String> {
+) -> Result<Vec<u32>, String> {
     let ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
     if is_unit_ty(ty) {
-        Ok(None)
-    } else if scalar_aggregate_field_types(tcx, ty).is_some() {
-        state.tuple_field(place.local, 0).map(Some).ok_or_else(|| {
-            format!(
-                "{}: aggregate call destination field is missing a synthetic local",
-                tcx.symbol_name(instance).name
-            )
-        })
+        Ok(Vec::new())
+    } else if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
+        field_types
+            .iter()
+            .enumerate()
+            .map(|(field, _)| {
+                state.tuple_field(place.local, field).ok_or_else(|| {
+                    format!(
+                        "{}: aggregate call destination field {field} is missing a synthetic local",
+                        tcx.symbol_name(instance).name
+                    )
+                })
+            })
+            .collect()
     } else {
-        lower_destination(state, place).map(Some)
+        lower_destination(state, place).map(|local| vec![local])
     }
 }
 

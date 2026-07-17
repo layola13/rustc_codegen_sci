@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 3;
-pub const PLAN_VERSION: u16 = 12;
+pub const PLAN_VERSION: u16 = 13;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -342,7 +342,8 @@ pub struct FunctionPlan {
     pub symbol: String,
     pub abi: FnAbiPlan,
     pub argument_locals: Vec<u32>,
-    pub return_local: Option<u32>,
+    /// Empty means void. One or two scalar locals for Direct/Cast/Pair returns.
+    pub return_locals: Vec<u32>,
     pub locals: Vec<LocalPlan>,
     pub blocks: Vec<BasicBlockPlan>,
 }
@@ -352,13 +353,15 @@ pub struct ExternFunctionPlan {
     pub symbol: String,
     pub abi: FnAbiPlan,
     pub argument_types: Vec<ScalarType>,
-    pub return_type: Option<ScalarType>,
+    /// Empty means void. One or two scalars for supported aggregate returns.
+    pub return_types: Vec<ScalarType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallSignaturePlan {
     pub argument_types: Vec<ScalarType>,
-    pub return_type: Option<ScalarType>,
+    /// Empty means void. One scalar for currently supported indirect calls.
+    pub return_types: Vec<ScalarType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -399,14 +402,14 @@ pub enum TerminatorPlan {
     Call {
         callee: String,
         args: Vec<ValueRef>,
-        destination: Option<u32>,
+        destinations: Vec<u32>,
         target: u32,
     },
     CallIndirect {
         callee: ValueRef,
         args: Vec<ValueRef>,
         signature: CallSignaturePlan,
-        destination: Option<u32>,
+        destinations: Vec<u32>,
         target: u32,
     },
 }
@@ -1338,7 +1341,7 @@ impl WireEncode for FunctionPlan {
         encoder.string(&self.symbol)?;
         self.abi.encode(encoder)?;
         encoder.vec(&self.argument_locals)?;
-        self.return_local.encode(encoder)?;
+        encoder.vec(&self.return_locals)?;
         encoder.vec(&self.locals)?;
         encoder.vec(&self.blocks)
     }
@@ -1350,7 +1353,7 @@ impl WireDecode for FunctionPlan {
             symbol: decoder.string()?,
             abi: FnAbiPlan::decode(decoder)?,
             argument_locals: decoder.vec()?,
-            return_local: Option::<u32>::decode(decoder)?,
+            return_locals: decoder.vec()?,
             locals: decoder.vec()?,
             blocks: decoder.vec()?,
         })
@@ -1362,7 +1365,7 @@ impl WireEncode for ExternFunctionPlan {
         encoder.string(&self.symbol)?;
         self.abi.encode(encoder)?;
         encoder.vec(&self.argument_types)?;
-        self.return_type.encode(encoder)
+        encoder.vec(&self.return_types)
     }
 }
 
@@ -1372,7 +1375,7 @@ impl WireDecode for ExternFunctionPlan {
             symbol: decoder.string()?,
             abi: FnAbiPlan::decode(decoder)?,
             argument_types: decoder.vec()?,
-            return_type: Option::<ScalarType>::decode(decoder)?,
+            return_types: decoder.vec()?,
         })
     }
 }
@@ -1380,7 +1383,7 @@ impl WireDecode for ExternFunctionPlan {
 impl WireEncode for CallSignaturePlan {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.vec(&self.argument_types)?;
-        self.return_type.encode(encoder)
+        encoder.vec(&self.return_types)
     }
 }
 
@@ -1388,7 +1391,7 @@ impl WireDecode for CallSignaturePlan {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
         Ok(Self {
             argument_types: decoder.vec()?,
-            return_type: Option::<ScalarType>::decode(decoder)?,
+            return_types: decoder.vec()?,
         })
     }
 }
@@ -1471,27 +1474,27 @@ impl WireEncode for TerminatorPlan {
             Self::Call {
                 callee,
                 args,
-                destination,
+                destinations,
                 target,
             } => {
                 encoder.u8(4);
                 encoder.string(callee)?;
                 encoder.vec(args)?;
-                destination.encode(encoder)?;
+                encoder.vec(destinations)?;
                 encoder.u32(*target);
             }
             Self::CallIndirect {
                 callee,
                 args,
                 signature,
-                destination,
+                destinations,
                 target,
             } => {
                 encoder.u8(7);
                 callee.encode(encoder)?;
                 encoder.vec(args)?;
                 signature.encode(encoder)?;
-                destination.encode(encoder)?;
+                encoder.vec(destinations)?;
                 encoder.u32(*target);
             }
         }
@@ -1514,7 +1517,7 @@ impl WireDecode for TerminatorPlan {
             4 => Ok(Self::Call {
                 callee: decoder.string()?,
                 args: decoder.vec()?,
-                destination: Option::<u32>::decode(decoder)?,
+                destinations: decoder.vec()?,
                 target: decoder.u32()?,
             }),
             5 => Ok(Self::Assert {
@@ -1536,7 +1539,7 @@ impl WireDecode for TerminatorPlan {
                 callee: ValueRef::decode(decoder)?,
                 args: decoder.vec()?,
                 signature: CallSignaturePlan::decode(decoder)?,
-                destination: Option::<u32>::decode(decoder)?,
+                destinations: decoder.vec()?,
                 target: decoder.u32()?,
             }),
             tag => Err(ProtocolError::InvalidTag("terminator", tag)),
@@ -1948,19 +1951,19 @@ mod tests {
                         symbol: "host_add_i32".into(),
                         abi: direct_abi(vec![(4, 4), (4, 4)], Some((4, 4))),
                         argument_types: vec![ScalarType::I32, ScalarType::I32],
-                        return_type: Some(ScalarType::I32),
+                        return_types: vec![ScalarType::I32],
                     },
                     ExternFunctionPlan {
                         symbol: "host_note_i32".into(),
                         abi: direct_abi(vec![(4, 4)], None),
                         argument_types: vec![ScalarType::I32],
-                        return_type: None,
+                        return_types: Vec::new(),
                     },
                     ExternFunctionPlan {
                         symbol: "host_identity_ptr".into(),
                         abi: direct_abi(vec![(8, 8)], Some((8, 8))),
                         argument_types: vec![ScalarType::Ptr],
-                        return_type: Some(ScalarType::Ptr),
+                        return_types: vec![ScalarType::Ptr],
                     },
                 ],
                 functions: vec![
@@ -1968,7 +1971,7 @@ mod tests {
                         symbol: "add_i32".into(),
                         abi: direct_abi(vec![(4, 4), (4, 4)], Some((4, 4))),
                         argument_locals: vec![1, 2],
-                        return_local: Some(0),
+                        return_locals: vec![0],
                         locals: vec![
                             LocalPlan {
                                 id: 0,
@@ -1998,7 +2001,7 @@ mod tests {
                         symbol: "note_i32".into(),
                         abi: direct_abi(vec![(4, 4)], None),
                         argument_locals: vec![1],
-                        return_local: None,
+                        return_locals: Vec::new(),
                         locals: vec![LocalPlan {
                             id: 1,
                             ty: ScalarType::I32,
@@ -2010,7 +2013,7 @@ mod tests {
                                 terminator: TerminatorPlan::Call {
                                     callee: "host_note_i32".into(),
                                     args: vec![ValueRef::Local(1)],
-                                    destination: None,
+                                    destinations: Vec::new(),
                                     target: 1,
                                 },
                             },
@@ -2025,7 +2028,7 @@ mod tests {
                         symbol: "call_fn_ptr_i32".into(),
                         abi: direct_abi(vec![(8, 8), (4, 4)], Some((4, 4))),
                         argument_locals: vec![1, 2],
-                        return_local: Some(0),
+                        return_locals: vec![0],
                         locals: vec![
                             LocalPlan {
                                 id: 0,
@@ -2049,9 +2052,9 @@ mod tests {
                                     args: vec![ValueRef::Local(2)],
                                     signature: CallSignaturePlan {
                                         argument_types: vec![ScalarType::I32],
-                                        return_type: Some(ScalarType::I32),
+                                        return_types: vec![ScalarType::I32],
                                     },
-                                    destination: Some(0),
+                                    destinations: vec![0],
                                     target: 1,
                                 },
                             },
@@ -2066,7 +2069,7 @@ mod tests {
                         symbol: "load_i32".into(),
                         abi: direct_abi(vec![(8, 8)], Some((4, 4))),
                         argument_locals: vec![1],
-                        return_local: Some(0),
+                        return_locals: vec![0],
                         locals: vec![
                             LocalPlan {
                                 id: 0,
@@ -2093,7 +2096,7 @@ mod tests {
                         symbol: "stack_i32".into(),
                         abi: direct_abi(Vec::new(), Some((4, 4))),
                         argument_locals: Vec::new(),
-                        return_local: Some(0),
+                        return_locals: vec![0],
                         locals: vec![
                             LocalPlan {
                                 id: 0,

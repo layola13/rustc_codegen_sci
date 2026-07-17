@@ -820,7 +820,7 @@ fn validate_extern_function(function: &ExternFunctionPlan) -> Result<(), String>
         &format!("extern function {}", function.symbol),
         &function.abi,
         function.argument_types.len(),
-        function.return_type.is_some(),
+        function.return_types.len(),
     )?;
     if function
         .argument_types
@@ -832,7 +832,7 @@ fn validate_extern_function(function: &ExternFunctionPlan) -> Result<(), String>
             function.symbol
         ));
     }
-    if function.return_type == Some(ScalarType::I1) {
+    if function.return_types == [ScalarType::I1] {
         return Err(format!(
             "extern function {} uses unsupported i1 ABI return",
             function.symbol
@@ -845,7 +845,7 @@ fn validate_fn_abi(
     context: &str,
     abi: &FnAbiPlan,
     lowered_argument_count: usize,
-    has_return_value: bool,
+    lowered_return_count: usize,
 ) -> Result<(), String> {
     match &abi.convention {
         CallingConventionPlan::C | CallingConventionPlan::Rust => {}
@@ -880,13 +880,22 @@ fn validate_fn_abi(
             "{context} ABI expects {expected_lowered_argument_count} lowered arguments but plan lowered {lowered_argument_count}",
         ));
     }
+    let has_return_value = lowered_return_count > 0;
     validate_abi_value(
         context,
         "return",
         &abi.return_value,
         has_return_value,
-        false,
+        true,
     )?;
+    let expected_return_count = lowered_abi_value_count(&abi.return_value).ok_or_else(|| {
+        format!("{context} ABI return uses unsupported lowered shape")
+    })?;
+    if expected_return_count != lowered_return_count {
+        return Err(format!(
+            "{context} ABI expects {expected_return_count} lowered return values but plan lowered {lowered_return_count}",
+        ));
+    }
     Ok(())
 }
 
@@ -906,7 +915,7 @@ fn validate_abi_value(
     label: &str,
     value: &sci_protocol::AbiValuePlan,
     is_lowered: bool,
-    allow_pair: bool,
+    _allow_pair: bool,
 ) -> Result<(), String> {
     validate_size_align(
         &format!("{context} ABI {label} layout"),
@@ -919,16 +928,13 @@ fn validate_abi_value(
         AbiPassModePlan::Ignore | AbiPassModePlan::Direct => Err(format!(
             "{context} ABI {label} mode does not match lowered value presence"
         )),
-        AbiPassModePlan::Pair if allow_pair && is_lowered && is_supported_pair_abi_value(value) => {
-            Ok(())
-        }
+        AbiPassModePlan::Pair if is_lowered && is_supported_pair_abi_value(value) => Ok(()),
         AbiPassModePlan::Pair => Err(format!(
             "{context} ABI {label} uses unsupported Pair pass mode"
         )),
         AbiPassModePlan::Cast { .. }
             if is_lowered
-                && (is_supported_cast_abi_value(value)
-                    || allow_pair && is_supported_wide_cast_abi_value(value)) =>
+                && (is_supported_cast_abi_value(value) || is_supported_wide_cast_abi_value(value)) =>
         {
             Ok(())
         }
@@ -1000,7 +1006,7 @@ fn validate_function(
         &format!("function {}", function.symbol),
         &function.abi,
         function.argument_locals.len(),
-        function.return_local.is_some(),
+        function.return_locals.len(),
     )?;
 
     let locals: BTreeMap<u32, ScalarType> = function
@@ -1011,10 +1017,10 @@ fn validate_function(
     if locals.len() != function.locals.len() {
         return Err(format!("{} has duplicate local ids", function.symbol));
     }
-    if let Some(return_local) = function.return_local
-        && !locals.contains_key(&return_local)
-    {
-        return Err(format!("{} return local is missing", function.symbol));
+    for return_local in &function.return_locals {
+        if !locals.contains_key(return_local) {
+            return Err(format!("{} return local is missing", function.symbol));
+        }
     }
     for argument in &function.argument_locals {
         if !locals.contains_key(argument) {
@@ -1094,11 +1100,11 @@ fn compute_block_entries(
                     exit.insert(dst);
                 }
             }
-            if let Some(dst) = terminator_destination(&block.terminator) {
-                if !locals.contains_key(&dst) {
+            for dst in terminator_destinations(&block.terminator) {
+                if !locals.contains_key(dst) {
                     return Err(format!("terminator writes missing local {dst}"));
                 }
-                exit.insert(dst);
+                exit.insert(*dst);
             }
             for successor in terminator_successors(&block.terminator) {
                 let Some(slot) = entries.get_mut(&successor) else {
@@ -1304,13 +1310,13 @@ fn validate_terminator(
 ) -> Result<(), String> {
     match terminator {
         TerminatorPlan::Return => {
-            if let Some(return_local) = function.return_local
-                && !defined.contains(&return_local)
-            {
-                return Err(format!(
-                    "{} return local is not initialized",
-                    function.symbol
-                ));
+            for return_local in &function.return_locals {
+                if !defined.contains(return_local) {
+                    return Err(format!(
+                        "{} return local is not initialized",
+                        function.symbol
+                    ));
+                }
             }
         }
         TerminatorPlan::Goto { .. } => {}
@@ -1365,7 +1371,7 @@ fn validate_terminator(
         TerminatorPlan::Call {
             callee,
             args,
-            destination,
+            destinations,
             ..
         } => {
             if let Some(callee_function) = functions.get(callee.as_str()) {
@@ -1392,26 +1398,23 @@ fn validate_terminator(
                         ));
                     }
                 }
-                match (destination, callee_function.return_local) {
-                    (Some(destination), Some(return_local)) => {
-                        validate_destination(locals, *destination)?;
-                        if locals[destination] != callee_locals[&return_local] {
-                            return Err(format!(
-                                "{} call to {} has return type mismatch",
-                                function.symbol, callee_function.symbol
-                            ));
-                        }
-                    }
-                    (None, None) => {}
-                    (Some(_), None) => {
+                if destinations.len() != callee_function.return_locals.len() {
+                    return Err(format!(
+                        "{} call to {} has {} destinations, expected {}",
+                        function.symbol,
+                        callee_function.symbol,
+                        destinations.len(),
+                        callee_function.return_locals.len()
+                    ));
+                }
+                for (destination, return_local) in destinations
+                    .iter()
+                    .zip(&callee_function.return_locals)
+                {
+                    validate_destination(locals, *destination)?;
+                    if locals[destination] != callee_locals[return_local] {
                         return Err(format!(
-                            "{} call to void function {} has a destination",
-                            function.symbol, callee_function.symbol
-                        ));
-                    }
-                    (None, Some(_)) => {
-                        return Err(format!(
-                            "{} call to {} is missing a destination",
+                            "{} call to {} has return type mismatch",
                             function.symbol, callee_function.symbol
                         ));
                     }
@@ -1439,26 +1442,23 @@ fn validate_terminator(
                     ));
                 }
             }
-            match (destination, extern_function.return_type) {
-                (Some(destination), Some(return_type)) => {
-                    validate_destination(locals, *destination)?;
-                    if locals[destination] != return_type {
-                        return Err(format!(
-                            "{} call to {} has return type mismatch",
-                            function.symbol, extern_function.symbol
-                        ));
-                    }
-                }
-                (None, None) => {}
-                (Some(_), None) => {
+            if destinations.len() != extern_function.return_types.len() {
+                return Err(format!(
+                    "{} call to {} has {} destinations, expected {}",
+                    function.symbol,
+                    extern_function.symbol,
+                    destinations.len(),
+                    extern_function.return_types.len()
+                ));
+            }
+            for (destination, return_type) in destinations
+                .iter()
+                .zip(&extern_function.return_types)
+            {
+                validate_destination(locals, *destination)?;
+                if locals[destination] != *return_type {
                     return Err(format!(
-                        "{} call to void extern {} has a destination",
-                        function.symbol, extern_function.symbol
-                    ));
-                }
-                (None, Some(_)) => {
-                    return Err(format!(
-                        "{} call to {} is missing a destination",
+                        "{} call to {} has return type mismatch",
                         function.symbol, extern_function.symbol
                     ));
                 }
@@ -1468,7 +1468,7 @@ fn validate_terminator(
             callee,
             args,
             signature,
-            destination,
+            destinations,
             ..
         } => {
             validate_value(locals, defined, callee)?;
@@ -1478,7 +1478,7 @@ fn validate_terminator(
                     function.symbol
                 ));
             }
-            validate_call_signature(function, locals, defined, args, signature, destination)?;
+            validate_call_signature(function, locals, defined, args, signature, destinations)?;
         }
     }
     Ok(())
@@ -1490,7 +1490,7 @@ fn validate_call_signature(
     defined: &BTreeSet<u32>,
     args: &[ValueRef],
     signature: &CallSignaturePlan,
-    destination: &Option<u32>,
+    destinations: &[u32],
 ) -> Result<(), String> {
     if args.len() != signature.argument_types.len() {
         return Err(format!(
@@ -1509,26 +1509,19 @@ fn validate_call_signature(
             ));
         }
     }
-    match (destination, signature.return_type) {
-        (Some(destination), Some(return_type)) => {
-            validate_destination(locals, *destination)?;
-            if locals[destination] != return_type {
-                return Err(format!(
-                    "{} indirect call has return type mismatch",
-                    function.symbol
-                ));
-            }
-        }
-        (None, None) => {}
-        (Some(_), None) => {
+    if destinations.len() != signature.return_types.len() {
+        return Err(format!(
+            "{} indirect call has {} destinations, expected {}",
+            function.symbol,
+            destinations.len(),
+            signature.return_types.len()
+        ));
+    }
+    for (destination, return_type) in destinations.iter().zip(&signature.return_types) {
+        validate_destination(locals, *destination)?;
+        if locals[destination] != *return_type {
             return Err(format!(
-                "{} indirect call to void signature has a destination",
-                function.symbol
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(format!(
-                "{} indirect call is missing a destination",
+                "{} indirect call has return type mismatch",
                 function.symbol
             ));
         }
@@ -1594,15 +1587,15 @@ fn terminator_successors(terminator: &TerminatorPlan) -> Vec<u32> {
     }
 }
 
-fn terminator_destination(terminator: &TerminatorPlan) -> Option<u32> {
+fn terminator_destinations(terminator: &TerminatorPlan) -> &[u32] {
     match terminator {
-        TerminatorPlan::Call { destination, .. }
-        | TerminatorPlan::CallIndirect { destination, .. } => *destination,
+        TerminatorPlan::Call { destinations, .. }
+        | TerminatorPlan::CallIndirect { destinations, .. } => destinations.as_slice(),
         TerminatorPlan::Return
         | TerminatorPlan::Goto { .. }
         | TerminatorPlan::Branch { .. }
         | TerminatorPlan::Assert { .. }
-        | TerminatorPlan::SwitchInt { .. } => None,
+        | TerminatorPlan::SwitchInt { .. } => &[],
     }
 }
 
@@ -1654,9 +1647,15 @@ fn emit_extern_function(out: &mut String, function: &ExternFunctionPlan) {
         out.push_str(&format!("arg{index}: {}", ty.sa_name()));
     }
     out.push_str(") -> ");
-    match function.return_type {
-        Some(return_type) => out.push_str(return_type.sa_name()),
-        None => out.push_str("void"),
+    if function.return_types.is_empty() {
+        out.push_str("void");
+    } else {
+        for (index, ty) in function.return_types.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            out.push_str(ty.sa_name());
+        }
     }
     out.push('\n');
 }
@@ -1688,14 +1687,18 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
         out.push_str(locals[local].sa_name());
     }
     out.push_str(") -> ");
-    match function.return_local {
-        Some(return_local) => {
+    if function.return_locals.is_empty() {
+        out.push_str("void");
+    } else {
+        for (index, return_local) in function.return_locals.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
             let return_ty = locals
-                .get(&return_local)
+                .get(return_local)
                 .ok_or_else(|| "missing return local type".to_string())?;
             out.push_str(return_ty.sa_name());
         }
-        None => out.push_str("void"),
     }
     out.push_str(":\n");
 
@@ -1838,8 +1841,8 @@ fn emit_terminator(
     match terminator {
         TerminatorPlan::Return => {
             let mut releasable = defined.clone();
-            if let Some(return_local) = function.return_local {
-                releasable.remove(&return_local);
+            for return_local in &function.return_locals {
+                releasable.remove(return_local);
             }
             for stack_alloc in stack_allocs {
                 releasable.remove(stack_alloc);
@@ -1849,13 +1852,17 @@ fn emit_terminator(
                 out.push_str(&local_name(local));
                 out.push('\n');
             }
-            match function.return_local {
-                Some(return_local) => {
-                    out.push_str("    return ");
-                    out.push_str(&local_name(return_local));
-                    out.push('\n');
+            if function.return_locals.is_empty() {
+                out.push_str("    return\n");
+            } else {
+                out.push_str("    return ");
+                for (index, return_local) in function.return_locals.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&local_name(*return_local));
                 }
-                None => out.push_str("    return\n"),
+                out.push('\n');
             }
         }
         TerminatorPlan::Goto { target } => {
@@ -1915,12 +1922,17 @@ fn emit_terminator(
         TerminatorPlan::Call {
             callee,
             args,
-            destination,
+            destinations,
             target,
         } => {
             out.push_str("    ");
-            if let Some(destination) = destination {
-                out.push_str(&local_name(*destination));
+            if !destinations.is_empty() {
+                for (index, destination) in destinations.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&local_name(*destination));
+                }
                 out.push_str(" = ");
             }
             out.push_str("call @");
@@ -1939,13 +1951,18 @@ fn emit_terminator(
         TerminatorPlan::CallIndirect {
             callee,
             args,
-            destination,
+            destinations,
             target,
             ..
         } => {
             out.push_str("    ");
-            if let Some(destination) = destination {
-                out.push_str(&local_name(*destination));
+            if !destinations.is_empty() {
+                for (index, destination) in destinations.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&local_name(*destination));
+                }
                 out.push_str(" = ");
             }
             out.push_str("call_indirect ");
@@ -2341,7 +2358,7 @@ mod tests {
     }
 
     fn assert_abi_error_contains(abi: FnAbiPlan, expected: &str) {
-        let err = validate_fn_abi("test_fn", &abi, abi.arguments.len(), false)
+        let err = validate_fn_abi("test_fn", &abi, abi.arguments.len(), 0)
             .expect_err("ABI should be rejected");
         assert!(
             err.contains(expected),
@@ -2354,7 +2371,7 @@ mod tests {
             symbol: "memory_fn".into(),
             abi: fn_abi(vec![direct_abi_value(8, 8)], direct_abi_value(4, 4)),
             argument_locals: vec![1],
-            return_local: Some(0),
+            return_locals: vec![0],
             locals: vec![
                 LocalPlan {
                     id: 0,
@@ -2409,7 +2426,7 @@ mod tests {
                 direct_abi_value(4, 4),
             ),
             argument_locals: vec![1, 2],
-            return_local: Some(0),
+            return_locals: vec![0],
             locals: vec![
                 LocalPlan {
                     id: 0,
@@ -2432,7 +2449,7 @@ mod tests {
                         callee: ValueRef::Local(1),
                         args: vec![ValueRef::Local(2)],
                         signature,
-                        destination: Some(0),
+                        destinations: vec![0],
                         target: 1,
                     },
                 },
@@ -2572,7 +2589,7 @@ mod tests {
     fn indirect_call_with_explicit_signature_is_accepted() {
         let function = indirect_call_function(CallSignaturePlan {
             argument_types: vec![ScalarType::I32],
-            return_type: Some(ScalarType::I32),
+            return_types: vec![ScalarType::I32],
         });
 
         validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
@@ -2590,7 +2607,7 @@ mod tests {
     fn indirect_call_signature_mismatch_is_rejected() {
         let function = indirect_call_function(CallSignaturePlan {
             argument_types: vec![ScalarType::U32],
-            return_type: Some(ScalarType::I32),
+            return_types: vec![ScalarType::I32],
         });
 
         let err = validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
@@ -2669,7 +2686,7 @@ mod tests {
             abi_value(AbiPassModePlan::Ignore),
         );
 
-        validate_fn_abi("test_fn", &abi, 1, false).expect("direct ABI should validate");
+        validate_fn_abi("test_fn", &abi, 1, 0).expect("direct ABI should validate");
     }
 
     #[test]
@@ -2677,7 +2694,7 @@ mod tests {
         for (size, align) in [(1, 1), (2, 2), (4, 4), (8, 8)] {
             let abi = fn_abi(Vec::new(), scalar_cast_abi_value(size, align));
 
-            validate_fn_abi("test_fn", &abi, 0, true).unwrap_or_else(|err| {
+            validate_fn_abi("test_fn", &abi, 0, 1).unwrap_or_else(|err| {
                 panic!("{size}-byte scalar Cast return should validate, got `{err}`")
             });
         }
@@ -2691,7 +2708,7 @@ mod tests {
                 ignored_abi_value(),
             );
 
-            validate_fn_abi("test_fn", &abi, 1, false).unwrap_or_else(|err| {
+            validate_fn_abi("test_fn", &abi, 1, 0).unwrap_or_else(|err| {
                 panic!("{size}-byte scalar Cast argument should validate, got `{err}`")
             });
         }
@@ -2700,7 +2717,7 @@ mod tests {
     #[test]
     fn non_scalar_width_cast_return_is_rejected() {
         let abi = fn_abi(Vec::new(), scalar_cast_abi_value(3, 1));
-        let err = validate_fn_abi("test_fn", &abi, 0, true)
+        let err = validate_fn_abi("test_fn", &abi, 0, 1)
             .expect_err("3-byte Cast return should be rejected");
 
         assert!(
@@ -2712,7 +2729,7 @@ mod tests {
     #[test]
     fn non_scalar_width_cast_argument_is_rejected() {
         let abi = fn_abi(vec![scalar_cast_abi_value(3, 1)], ignored_abi_value());
-        let err = validate_fn_abi("test_fn", &abi, 1, false)
+        let err = validate_fn_abi("test_fn", &abi, 1, 0)
             .expect_err("3-byte Cast argument should be rejected");
 
         assert!(
@@ -2743,7 +2760,7 @@ mod tests {
                 "c_direct_void",
                 fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value()),
                 1,
-                false,
+                0,
                 None,
             ),
             (
@@ -2753,114 +2770,121 @@ mod tests {
                     direct_abi_value(8, 8),
                 ),
                 2,
-                true,
+                1,
                 None,
             ),
-            ("rust_direct_return", rust_direct, 1, true, None),
+            ("rust_direct_return", rust_direct, 1, 1, None),
             (
                 "lowered_arg_count_mismatch",
                 fn_abi(vec![direct_abi_value(4, 4)], ignored_abi_value()),
                 2,
-                false,
+                0,
                 Some("lowered 2"),
             ),
             (
                 "fixed_count_mismatch",
                 fixed_count_mismatch,
                 1,
-                false,
+                0,
                 Some("fixed_count"),
             ),
             (
                 "direct_return_missing_destination",
                 fn_abi(Vec::new(), direct_abi_value(4, 4)),
                 0,
-                false,
+                0,
                 Some("mode does not match"),
             ),
             (
                 "ignore_return_with_destination",
                 fn_abi(Vec::new(), ignored_abi_value()),
                 0,
-                true,
+                1,
                 Some("mode does not match"),
             ),
             (
                 "pair_argument",
                 fn_abi(vec![pair_abi_value()], ignored_abi_value()),
                 2,
-                false,
+                0,
                 None,
             ),
             (
                 "pair_return",
                 fn_abi(Vec::new(), pair_abi_value()),
                 0,
-                true,
-                Some("unsupported Pair"),
+                2,
+                None,
+            ),
+            (
+                "wide_cast_return",
+                fn_abi(Vec::new(), wide_cast_abi_value()),
+                0,
+                2,
+                None,
             ),
             (
                 "cast_argument",
                 fn_abi(vec![cast_abi_value()], ignored_abi_value()),
                 1,
-                false,
+                0,
                 Some("unsupported Cast"),
             ),
             (
                 "wide_cast_argument",
                 fn_abi(vec![wide_cast_abi_value()], ignored_abi_value()),
                 2,
-                false,
+                0,
                 None,
             ),
             (
                 "cast_return",
                 fn_abi(Vec::new(), cast_abi_value()),
                 0,
-                true,
+                1,
                 Some("unsupported Cast"),
             ),
             (
                 "indirect_argument",
                 fn_abi(vec![indirect_abi_value()], ignored_abi_value()),
                 1,
-                false,
+                0,
                 Some("unsupported Indirect"),
             ),
             (
                 "indirect_return",
                 fn_abi(Vec::new(), indirect_abi_value()),
                 0,
-                true,
+                1,
                 Some("unsupported Indirect"),
             ),
             (
                 "invalid_argument_alignment",
                 fn_abi(vec![direct_abi_value(8, 3)], ignored_abi_value()),
                 1,
-                false,
+                0,
                 Some("invalid alignment"),
             ),
             (
                 "invalid_return_size_alignment",
                 fn_abi(Vec::new(), direct_abi_value(6, 4)),
                 0,
-                true,
+                1,
                 Some("not a multiple"),
             ),
-            ("variadic", variadic, 1, false, Some("variadic")),
-            ("can_unwind", can_unwind, 1, false, Some("unwinding")),
+            ("variadic", variadic, 1, 0, Some("variadic")),
+            ("can_unwind", can_unwind, 1, 0, Some("unwinding")),
             (
                 "other_convention",
                 other_convention,
                 1,
-                false,
+                0,
                 Some("unsupported calling convention"),
             ),
         ];
 
-        for (name, abi, lowered_argument_count, has_return_value, expected) in fixtures {
-            let result = validate_fn_abi(name, &abi, lowered_argument_count, has_return_value);
+        for (name, abi, lowered_argument_count, lowered_return_count, expected) in fixtures {
+            let result = validate_fn_abi(name, &abi, lowered_argument_count, lowered_return_count);
             match expected {
                 Some(expected) => {
                     let err = result.expect_err("ABI fixture should be rejected");
@@ -3051,7 +3075,7 @@ mod tests {
     fn pair_argument_is_accepted_as_two_lowered_values() {
         let abi = fn_abi(vec![pair_abi_value()], abi_value(AbiPassModePlan::Ignore));
 
-        validate_fn_abi("test_fn", &abi, 2, false)
+        validate_fn_abi("test_fn", &abi, 2, 0)
             .expect("pair argument ABI should validate as two lowered values");
     }
 
@@ -3062,15 +3086,36 @@ mod tests {
             abi_value(AbiPassModePlan::Ignore),
         );
 
-        validate_fn_abi("test_fn", &abi, 2, false)
+        validate_fn_abi("test_fn", &abi, 2, 0)
             .expect("wide Cast argument ABI should validate as two lowered values");
     }
 
     #[test]
-    fn pair_return_is_rejected_before_emission() {
+    fn pair_return_is_accepted_as_two_lowered_values() {
         let abi = fn_abi(Vec::new(), pair_abi_value());
 
-        assert_abi_error_contains(abi, "unsupported Pair pass mode");
+        validate_fn_abi("test_fn", &abi, 0, 2)
+            .expect("pair return ABI should validate as two lowered values");
+    }
+
+    #[test]
+    fn wide_cast_return_is_accepted_as_two_lowered_values() {
+        let abi = fn_abi(Vec::new(), wide_cast_abi_value());
+
+        validate_fn_abi("test_fn", &abi, 0, 2)
+            .expect("wide Cast return ABI should validate as two lowered values");
+    }
+
+    #[test]
+    fn pair_return_count_mismatch_is_rejected() {
+        let abi = fn_abi(Vec::new(), pair_abi_value());
+
+        let err = validate_fn_abi("test_fn", &abi, 0, 1)
+            .expect_err("pair return with one lowered value should be rejected");
+        assert!(
+            err.contains("expects 2 lowered return values"),
+            "expected return-count diagnostic, got `{err}`"
+        );
     }
 
     #[test]
