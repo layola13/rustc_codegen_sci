@@ -44,12 +44,13 @@ Baseline: 2026-07-16.
   modes before MIR lowering.
 - `9f821b6`: single-field signed and unsigned 8/16/32/64-bit Cast ABI
   arguments and returns lower through scalar registers.
-- `d76760b`: protocol-level `DiagnosticPayload` plus scalar stack allocations
-  with size/alignment validation and address-taken local lowering through
-  canonical stack slots.
-- Current increment: scalar stack allocations with size/alignment validation
-  lower through canonical slots, while worker/backend diagnostics keep the
-  shared protocol-level `DiagnosticPayload`.
+- `d76760b`: protocol-level `DiagnosticPayload` shared by worker RPC responses
+  and backend fatal diagnostics.
+- `cc094a9`: `PLAN_VERSION = 11` scalar stack allocations with size/alignment
+  validation and address-taken local lowering through canonical stack slots.
+- Current increment: `PLAN_VERSION = 12` scalar `extern "C"` function pointer
+  indirect calls lower through canonical `CallIndirect` terminators carrying
+  explicit scalar argument/return signatures.
 
 ## Current Increment
 
@@ -155,6 +156,19 @@ Baseline: 2026-07-16.
 - Added linked smoke coverage for stack-backed scalar locals that lower through
   canonical stack slots and still round-trip through load/store on the same
   local value.
+- Upgraded the canonical protocol to `PLAN_VERSION = 12` and introduced
+  `CallSignaturePlan` plus `TerminatorPlan::CallIndirect` for indirect calls
+  with explicit scalar argument/return signatures.
+- Added worker validation for indirect calls: callee must be a defined `ptr`,
+  argument values must match the explicit signature, and the destination must
+  match the signature return type.
+- Added worker SA emission for `call_indirect` from the canonical terminator,
+  plus unit coverage for accepted and rejected indirect-call signatures.
+- Lowered scalar `extern "C"` function pointer calls from MIR to canonical
+  `CallIndirect`, while rejecting variadic, unwinding, non-C, aggregate, and
+  unsupported pass-mode function pointer signatures before object publication.
+- Added linked C smoke coverage passing a host callback into SCI-compiled Rust
+  and verifying the indirect call result.
 
 ## Current Boundary
 
@@ -180,5 +194,8 @@ function/block/local location. Backend-originated lowering failures also include
 MIR block and statement/terminator context plus rustc source spans for
 statement/terminator lowering failures. Stack-backed scalar locals now lower
 through canonical `stack_alloc` slots instead of needing a separate memory model.
-Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
-remain incomplete.
+Scalar `extern "C"` function pointer calls now lower through canonical
+`CallIndirect` terminators with explicit scalar signatures; aggregate or
+non-C/variadic/unwinding function pointer calls remain hard errors. Aggregate
+ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof remain
+incomplete.

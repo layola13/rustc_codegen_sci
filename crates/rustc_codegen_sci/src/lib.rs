@@ -37,12 +37,12 @@ use rustc_target::callconv::{FnAbi, PassMode};
 use rustc_target::spec::PanicStrategy;
 use sci_protocol::{
     AbiPassModePlan, AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan,
-    BasicBlockPlan, BinaryOp, CallingConventionPlan, CastOp, CompareOp, CompileRequest,
-    CompileResponse, DiagnosticLocation, DiagnosticPayload, Endian, ExternFunctionPlan,
-    FieldLayoutRecipe, FnAbiPlan, FunctionPlan, LocalPlan, NicheRecipe, Operation, PLAN_VERSION,
-    ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe, TargetPlan,
-    TerminatorPlan, TypeLayoutRecipe, ValidRangeRecipe, ValueRef, VariantLayoutRecipe,
-    VariantRecipe, read_frame, write_frame,
+    BasicBlockPlan, BinaryOp, CallSignaturePlan, CallingConventionPlan, CastOp, CompareOp,
+    CompileRequest, CompileResponse, DiagnosticLocation, DiagnosticPayload, Endian,
+    ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan, LocalPlan, NicheRecipe,
+    Operation, PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan,
+    TagEncodingRecipe, TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValidRangeRecipe, ValueRef,
+    VariantLayoutRecipe, VariantRecipe, read_frame, write_frame,
 };
 
 const BACKEND_NAME: &str = "sci";
@@ -894,28 +894,47 @@ fn lower_terminator<'tcx>(
                     tcx.symbol_name(instance).name
                 )
             })?;
-            let callee = lower_direct_callee(tcx, instance, func)?;
-            let callee_symbol = tcx.symbol_name(callee).name.to_string();
             let args = args
                 .iter()
                 .map(|arg| lower_call_argument(tcx, instance, mir, state, &arg.node))
                 .collect::<Result<Vec<_>, _>>()?;
-            if tcx.is_foreign_item(callee.def_id()) {
-                let extern_function = lower_extern_function(
+            let lowered_arg_count = args.len();
+            if func.const_fn_def().is_some() {
+                let callee = lower_direct_callee(tcx, instance, func)?;
+                let callee_symbol = tcx.symbol_name(callee).name.to_string();
+                if tcx.is_foreign_item(callee.def_id()) {
+                    let extern_function = lower_extern_function(
+                        tcx,
+                        instance,
+                        callee,
+                        module_state,
+                        mir,
+                        func,
+                        lowered_arg_count,
+                        destination,
+                    )?;
+                    module_state.register_extern_function(extern_function)?;
+                }
+                return Ok(TerminatorPlan::Call {
+                    callee: callee_symbol,
+                    args,
+                    destination: lower_call_destination(tcx, instance, mir, state, *destination)?,
+                    target: block_id_id(target),
+                });
+            }
+
+            Ok(TerminatorPlan::CallIndirect {
+                callee: lower_operand(tcx, instance, mir, state, func)?,
+                args,
+                signature: lower_indirect_call_signature(
                     tcx,
                     instance,
-                    callee,
-                    module_state,
                     mir,
+                    module_state,
                     func,
-                    args.len(),
+                    lowered_arg_count,
                     destination,
-                )?;
-                module_state.register_extern_function(extern_function)?;
-            }
-            Ok(TerminatorPlan::Call {
-                callee: callee_symbol,
-                args,
+                )?,
                 destination: lower_call_destination(tcx, instance, mir, state, *destination)?,
                 target: block_id_id(target),
             })
@@ -1111,6 +1130,127 @@ fn lower_extern_function<'tcx>(
         argument_types,
         return_type,
     })
+}
+
+fn lower_indirect_call_signature<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    module_state: &mut ModuleLoweringState,
+    func: &Operand<'tcx>,
+    lowered_arg_count: usize,
+    destination: &Place<'tcx>,
+) -> Result<CallSignaturePlan, String> {
+    let fn_ty = monomorphize_ty(tcx, caller, func.ty(&mir.local_decls, tcx));
+    if !fn_ty.is_fn_ptr() {
+        return Err(format!(
+            "{}: only direct function calls or function pointer calls are currently supported",
+            tcx.symbol_name(caller).name
+        ));
+    }
+    let fn_sig = fn_ty.fn_sig(tcx);
+    if !matches!(fn_sig.abi(), ExternAbi::C { unwind: false }) {
+        return Err(format!(
+            "{}: function pointer call uses unsupported ABI {}",
+            tcx.symbol_name(caller).name,
+            fn_sig.abi()
+        ));
+    }
+    if fn_sig.c_variadic() {
+        return Err(format!(
+            "{}: variadic function pointer calls are not supported",
+            tcx.symbol_name(caller).name
+        ));
+    }
+    let fn_abi = tcx
+        .fn_abi_of_fn_ptr(
+            ty::TypingEnv::fully_monomorphized().as_query_input((fn_sig, ty::List::empty())),
+        )
+        .map_err(|err| {
+            format!(
+                "{}: failed to compute function pointer FnAbi: {err:?}",
+                tcx.symbol_name(caller).name
+            )
+        })?;
+    validate_backend_indirect_call_abi(tcx, caller, lower_rustc_fn_abi(fn_abi))?;
+
+    let signature_inputs = fn_sig.inputs().skip_binder();
+    let signature_input_count = signature_inputs.len();
+    if lowered_arg_count != signature_input_count {
+        return Err(format!(
+            "{}: function pointer call lowered with {lowered_arg_count} args, expected {signature_input_count}",
+            tcx.symbol_name(caller).name
+        ));
+    }
+    let mut argument_types = Vec::with_capacity(signature_input_count);
+    for input in signature_inputs.iter() {
+        let ty = monomorphize_ty(tcx, caller, *input);
+        module_state.register_type_layout(tcx, ty)?;
+        argument_types.push(scalar_type_for_ty(ty).ok_or_else(|| {
+            format!(
+                "{}: function pointer argument has unsupported type `{}`",
+                tcx.symbol_name(caller).name,
+                ty
+            )
+        })?);
+    }
+
+    let sig_return_ty = monomorphize_ty(tcx, caller, fn_sig.output().skip_binder());
+    module_state.register_type_layout(tcx, sig_return_ty)?;
+    let destination_ty = monomorphize_ty(tcx, caller, destination.ty(&mir.local_decls, tcx).ty);
+    module_state.register_type_layout(tcx, destination_ty)?;
+    let return_type = if is_unit_ty(sig_return_ty) {
+        if !is_unit_ty(destination_ty) {
+            return Err(format!(
+                "{}: void function pointer call returns into non-unit destination `{}`",
+                tcx.symbol_name(caller).name,
+                destination_ty
+            ));
+        }
+        None
+    } else {
+        let return_type = scalar_type_for_ty(destination_ty).ok_or_else(|| {
+            format!(
+                "{}: function pointer return destination has unsupported type `{}`",
+                tcx.symbol_name(caller).name,
+                destination_ty
+            )
+        })?;
+        if scalar_type_for_ty(sig_return_ty) != Some(return_type) {
+            return Err(format!(
+                "{}: function pointer return type does not match destination",
+                tcx.symbol_name(caller).name
+            ));
+        }
+        Some(return_type)
+    };
+
+    Ok(CallSignaturePlan {
+        argument_types,
+        return_type,
+    })
+}
+
+fn validate_backend_indirect_call_abi<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: Instance<'tcx>,
+    abi: FnAbiPlan,
+) -> Result<(), String> {
+    for (index, argument) in abi.arguments.iter().enumerate() {
+        if let Some(mode) = unsupported_backend_pass_mode(&argument.mode) {
+            return Err(format!(
+                "{}: function pointer ABI argument {index} uses unsupported {mode} pass mode",
+                tcx.symbol_name(caller).name
+            ));
+        }
+    }
+    if let Some(mode) = unsupported_backend_pass_mode(&abi.return_value.mode) {
+        return Err(format!(
+            "{}: function pointer ABI return uses unsupported {mode} pass mode",
+            tcx.symbol_name(caller).name
+        ));
+    }
+    Ok(())
 }
 
 fn lower_fn_abi_plan<'tcx>(
@@ -2886,7 +3026,7 @@ fn scalar_type_for_ty(ty: Ty<'_>) -> Option<ScalarType> {
         ty::Uint(ty::UintTy::U16) => Some(ScalarType::U16),
         ty::Uint(ty::UintTy::U32) => Some(ScalarType::U32),
         ty::Uint(ty::UintTy::U64 | ty::UintTy::Usize) => Some(ScalarType::U64),
-        ty::RawPtr(..) | ty::Ref(..) => Some(ScalarType::Ptr),
+        ty::RawPtr(..) | ty::Ref(..) | ty::FnPtr(..) => Some(ScalarType::Ptr),
         _ => None,
     }
 }

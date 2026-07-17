@@ -16,7 +16,9 @@ The current bring-up slice supports `x86_64-unknown-linux-gnu`, `panic=abort`,
 `no_std`, scalar integer, raw pointer, and void function signatures including
 `isize`/`usize`, straight-line MIR assignments, scalar integer arithmetic,
 signed/unsigned comparisons, integer casts, direct scalar/raw-pointer function
-calls, scalar/raw-pointer `extern "C"` calls, unit/void returns and calls, MIR
+calls, scalar/raw-pointer `extern "C"` calls, scalar `extern "C"` function
+pointer indirect calls with explicit canonical signatures, unit/void returns
+and calls, MIR
 assert abort paths, division/remainder, shifts, unary integer negation/bit-not,
 multi-block bool branch CFG, and scalar integer `SwitchInt`/`match` lowered through
 worker-generated compare chains. With overflow checks enabled, checked integer
@@ -41,7 +43,8 @@ array-index projection through a raw pointer are supported; dynamic indices,
 slices, and whole-aggregate memory operations are not supported yet.
 Scalar stack allocations with size/alignment validation are supported for
 address-taken scalar locals.
-General aggregate and ZST struct argument/return ABI is still rejected.
+General aggregate and ZST struct argument/return ABI is still rejected, as are
+non-scalar, variadic, unwinding, and non-C function pointer calls.
 Unsupported targets, ABIs, MIR operations, and features are hard errors. There
 is no LLVM-backend or `bc2sa` fallback. Worker rejections and
 backend-originated fatal diagnostics share a protocol-level `DiagnosticPayload`

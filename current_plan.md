@@ -27,11 +27,9 @@ No LLVM backend fallback and no `bc2sa` fallback.
 3. Add allocation images and relocations for statics, strings, and panic data.
 4. Add direct SAB no-fallback emission from the same canonical plan.
 
-Recently completed: structured worker and backend diagnostics now share a
-protocol-level `DiagnosticPayload` with stable codes and optional
-function/block/local locations; scalar stack allocations with size/alignment
-validation now lower through canonical `stack_alloc` slots for address-taken
-locals.
+Recently completed: scalar `extern "C"` function pointer calls now lower to
+canonical `CallIndirect` terminators carrying explicit scalar argument/return
+signatures, with worker validation and linked C smoke coverage.
 
 ## Exit Gates
 

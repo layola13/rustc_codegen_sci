@@ -36,6 +36,9 @@ Baseline date: 2026-07-16.
   function/block/local location.
 - Scalar stack allocations with size/alignment validation lower through
   canonical `stack_alloc` slots for address-taken scalar locals.
+- Scalar `extern "C"` function pointer indirect calls lower through canonical
+  `CallIndirect` terminators carrying explicit scalar argument/return
+  signatures, with worker validation and linked C smoke coverage.
 - Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.
@@ -43,8 +46,8 @@ Baseline date: 2026-07-16.
   return to rustc's normal output pipeline.
 - Smoke coverage for scalar addition, signed comparison, bool-to-int cast,
   `isize`/`usize`, raw pointer direct ABI, direct scalar/raw-pointer function
-  calls, scalar/raw-pointer extern C calls, unit/void returns and calls,
-  if/else CFG, MIR assert abort paths,
+  calls, scalar/raw-pointer extern C calls, scalar `extern "C"` function
+  pointer indirect calls, unit/void returns and calls, if/else CFG, MIR assert abort paths,
   signed/unsigned scalar integer `SwitchInt`/`match`, division/remainder,
   shifts, unary integer negation/bit-not, checked add/sub/mul overflow tuple
   lowering through 64-bit integers, local scalar tuple/struct construction and
@@ -60,10 +63,10 @@ Baseline date: 2026-07-16.
 | Target | `x86_64-unknown-linux-gnu` with explicit ELF object format, rustc DataLayout, `x86-64` CPU, empty target features, PIC relocation model, and default code model |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
-| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted; single-field signed and unsigned 8/16/32/64-bit Cast aggregate arguments/returns are lowered through scalar registers; Pair/Indirect and unsupported Cast cases are serialized but rejected until implemented; backend preflight rejects unsupported non-Direct definitions before MIR lowering; simple scalar raw-pointer deref/load/store, scalar field projection, and fixed scalar array-index projection are supported |
+| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted; single-field signed and unsigned 8/16/32/64-bit Cast aggregate arguments/returns are lowered through scalar registers; scalar `extern "C"` function pointer indirect calls carry explicit canonical signatures and lower to `call_indirect`; Pair/Indirect and unsupported Cast cases are serialized but rejected until implemented; backend preflight rejects unsupported non-Direct definitions before MIR lowering; simple scalar raw-pointer deref/load/store, scalar field projection, and fixed scalar array-index projection are supported |
 | Type Layout | monomorphized rustc `LayoutData` recipes for local and extern signature types, including size/alignment, fields, variants, niches, and scalar valid ranges |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
-| MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls, plus narrow Cast aggregate `extern "C"` calls, with unreachable unwind |
+| MIR calls | direct module-local scalar/raw-pointer/void function calls, direct scalar/raw-pointer/void `extern "C"` calls, narrow Cast aggregate `extern "C"` calls, and scalar `extern "C"` function pointer indirect calls, with unreachable unwind |
 | MIR rvalues | `Use`, scalar raw-pointer load/store including simple field offsets and fixed array element offsets, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |
 | Values | integer/bool/raw-pointer locals, integer/bool constants, and null pointer constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |
@@ -76,8 +79,8 @@ Every missing capability is rejected before object publication.
 The full staged roadmap is tracked in `docs/implementation_plan_cn.md`; live
 execution state is tracked in `tasks.md`, `progress.md`, and `current_plan.md`.
 
-1. Indirect/ABI-rich calls, tuple argument/return ABI, and wider scalar
-   operation coverage.
+1. ABI-rich calls, tuple argument/return ABI, non-scalar function pointer
+   calls, and wider scalar operation coverage.
 2. Complete `TyAndLayout` recipes, Pair/Cast/Indirect ABI lowering,
    aggregates, allocations, relocations, statics, and drop glue.
 3. SAB v5 in SCI and direct SAB emission.

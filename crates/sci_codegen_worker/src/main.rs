@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use sci_protocol::{
-    AbiPassModePlan, AbiRegisterKind, AbiValuePlan, BasicBlockPlan, CallingConventionPlan,
-    CompileRequest, CompileResponse, DiagnosticLocation, DiagnosticPayload, Endian,
-    ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation,
+    AbiPassModePlan, AbiRegisterKind, AbiValuePlan, BasicBlockPlan, CallSignaturePlan,
+    CallingConventionPlan, CompileRequest, CompileResponse, DiagnosticLocation, DiagnosticPayload,
+    Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation,
     PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe,
     TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, read_frame, write_frame,
 };
@@ -1106,6 +1106,74 @@ fn validate_terminator(
                 }
             }
         }
+        TerminatorPlan::CallIndirect {
+            callee,
+            args,
+            signature,
+            destination,
+            ..
+        } => {
+            validate_value(locals, defined, callee)?;
+            if value_type(locals, callee)? != ScalarType::Ptr {
+                return Err(format!(
+                    "{} indirect call callee must be ptr",
+                    function.symbol
+                ));
+            }
+            validate_call_signature(function, locals, defined, args, signature, destination)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_call_signature(
+    function: &FunctionPlan,
+    locals: &BTreeMap<u32, ScalarType>,
+    defined: &BTreeSet<u32>,
+    args: &[ValueRef],
+    signature: &CallSignaturePlan,
+    destination: &Option<u32>,
+) -> Result<(), String> {
+    if args.len() != signature.argument_types.len() {
+        return Err(format!(
+            "{} indirect call has {} args, expected {}",
+            function.symbol,
+            args.len(),
+            signature.argument_types.len()
+        ));
+    }
+    for (arg, expected_ty) in args.iter().zip(&signature.argument_types) {
+        validate_value(locals, defined, arg)?;
+        if value_type(locals, arg)? != *expected_ty {
+            return Err(format!(
+                "{} indirect call has argument type mismatch",
+                function.symbol
+            ));
+        }
+    }
+    match (destination, signature.return_type) {
+        (Some(destination), Some(return_type)) => {
+            validate_destination(locals, *destination)?;
+            if locals[destination] != return_type {
+                return Err(format!(
+                    "{} indirect call has return type mismatch",
+                    function.symbol
+                ));
+            }
+        }
+        (None, None) => {}
+        (Some(_), None) => {
+            return Err(format!(
+                "{} indirect call to void signature has a destination",
+                function.symbol
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(format!(
+                "{} indirect call is missing a destination",
+                function.symbol
+            ));
+        }
     }
     Ok(())
 }
@@ -1162,13 +1230,16 @@ fn terminator_successors(terminator: &TerminatorPlan) -> Vec<u32> {
             targets.push(*otherwise);
             targets
         }
-        TerminatorPlan::Call { target, .. } => vec![*target],
+        TerminatorPlan::Call { target, .. } | TerminatorPlan::CallIndirect { target, .. } => {
+            vec![*target]
+        }
     }
 }
 
 fn terminator_destination(terminator: &TerminatorPlan) -> Option<u32> {
     match terminator {
-        TerminatorPlan::Call { destination, .. } => *destination,
+        TerminatorPlan::Call { destination, .. }
+        | TerminatorPlan::CallIndirect { destination, .. } => *destination,
         TerminatorPlan::Return
         | TerminatorPlan::Goto { .. }
         | TerminatorPlan::Branch { .. }
@@ -1496,6 +1567,31 @@ fn emit_terminator(
             }
             out.push_str("call @");
             out.push_str(callee);
+            out.push('(');
+            for (index, arg) in args.iter().enumerate() {
+                if index != 0 {
+                    out.push_str(", ");
+                }
+                emit_value(out, arg);
+            }
+            out.push_str(")\n    jmp ");
+            out.push_str(&block_label(*target));
+            out.push('\n');
+        }
+        TerminatorPlan::CallIndirect {
+            callee,
+            args,
+            destination,
+            target,
+            ..
+        } => {
+            out.push_str("    ");
+            if let Some(destination) = destination {
+                out.push_str(&local_name(*destination));
+                out.push_str(" = ");
+            }
+            out.push_str("call_indirect ");
+            emit_value(out, callee);
             out.push('(');
             for (index, arg) in args.iter().enumerate() {
                 if index != 0 {
@@ -1906,6 +2002,50 @@ mod tests {
         }
     }
 
+    fn indirect_call_function(signature: CallSignaturePlan) -> FunctionPlan {
+        FunctionPlan {
+            symbol: "indirect_call_fn".into(),
+            abi: fn_abi(
+                vec![direct_abi_value(8, 8), direct_abi_value(4, 4)],
+                direct_abi_value(4, 4),
+            ),
+            argument_locals: vec![1, 2],
+            return_local: Some(0),
+            locals: vec![
+                LocalPlan {
+                    id: 0,
+                    ty: ScalarType::I32,
+                },
+                LocalPlan {
+                    id: 1,
+                    ty: ScalarType::Ptr,
+                },
+                LocalPlan {
+                    id: 2,
+                    ty: ScalarType::I32,
+                },
+            ],
+            blocks: vec![
+                BasicBlockPlan {
+                    id: 0,
+                    operations: Vec::new(),
+                    terminator: TerminatorPlan::CallIndirect {
+                        callee: ValueRef::Local(1),
+                        args: vec![ValueRef::Local(2)],
+                        signature,
+                        destination: Some(0),
+                        target: 1,
+                    },
+                },
+                BasicBlockPlan {
+                    id: 1,
+                    operations: Vec::new(),
+                    terminator: TerminatorPlan::Return,
+                },
+            ],
+        }
+    }
+
     #[test]
     fn load_store_memory_operations_are_accepted() {
         let function = memory_function(vec![
@@ -2026,6 +2166,39 @@ mod tests {
                 block: None,
                 local: Some(3),
             })
+        );
+    }
+
+    #[test]
+    fn indirect_call_with_explicit_signature_is_accepted() {
+        let function = indirect_call_function(CallSignaturePlan {
+            argument_types: vec![ScalarType::I32],
+            return_type: Some(ScalarType::I32),
+        });
+
+        validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
+            .expect("indirect call function should validate");
+
+        let mut sa = String::new();
+        emit_function(&mut sa, &function).expect("indirect call function should emit");
+        assert!(
+            sa.contains("v0 = call_indirect v1(v2)"),
+            "expected indirect call emission, got:\n{sa}"
+        );
+    }
+
+    #[test]
+    fn indirect_call_signature_mismatch_is_rejected() {
+        let function = indirect_call_function(CallSignaturePlan {
+            argument_types: vec![ScalarType::U32],
+            return_type: Some(ScalarType::I32),
+        });
+
+        let err = validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
+            .expect_err("indirect call signature mismatch should be rejected");
+        assert!(
+            err.contains("argument type mismatch"),
+            "expected indirect call diagnostic, got `{err}`"
         );
     }
 

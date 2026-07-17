@@ -180,6 +180,15 @@ pub extern "C" fn sci_call_host_add_i32(a: i32, b: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_call_fn_ptr_i32(
+    f: extern "C" fn(i32, i32) -> i32,
+    a: i32,
+    b: i32,
+) -> i32 {
+    f(a, b)
+}
+
+#[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn sci_unit_noop(_a: i32) {}
 

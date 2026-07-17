@@ -31,6 +31,8 @@ extern void sci_store_array_i32_at1(FfiI32Array4 *values, int32_t value);
 extern int32_t sci_replace_array_i32_at3(FfiI32Array4 *values, int32_t value);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
+typedef int32_t (*sci_i32_binary_fn)(int32_t a, int32_t b);
+extern int32_t sci_call_fn_ptr_i32(sci_i32_binary_fn f, int32_t a, int32_t b);
 extern void sci_unit_noop(int32_t a);
 extern int32_t sci_call_unit_noop(int32_t a);
 extern int32_t sci_call_host_note_i32(int32_t a);
@@ -62,6 +64,10 @@ void sci_host_note_i32(int32_t value) {
 
 const int32_t *sci_host_identity_ptr(const int32_t *value) {
     return value;
+}
+
+static int32_t host_callback_add_i32(int32_t a, int32_t b) {
+    return a + b;
 }
 
 int main(void) {
@@ -172,6 +178,9 @@ int main(void) {
     }
     if (sci_call_host_add_i32(20, 22) != 42) {
         return 19;
+    }
+    if (sci_call_fn_ptr_i32(host_callback_add_i32, 13, 29) != 42) {
+        return 58;
     }
     sci_unit_noop(5);
     if (sci_call_unit_noop(7) != 42) {

@@ -47,6 +47,8 @@ Baseline: 2026-07-16.
   pointees.
 - [x] Scalar raw-pointer fixed array-index load/store using rustc array layout
   offsets.
+- [x] Scalar `extern "C"` function pointer indirect calls with explicit
+  canonical signatures.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI
@@ -78,7 +80,7 @@ Baseline: 2026-07-16.
 - [x] Add raw-pointer scalar field load/store using rustc field layout offsets.
 - [x] Add raw-pointer scalar fixed array-index load/store using rustc array
   layout offsets.
-- [ ] Add indirect calls with explicit function signatures.
+- [x] Add indirect calls with explicit function signatures.
 - [ ] Add aggregate argument/return ABI, including sret/byval.
 - [ ] Add direct SAB no-fallback emission from the canonical plan.
 - [ ] Add proof/work-product manifest and content-addressed reuse.

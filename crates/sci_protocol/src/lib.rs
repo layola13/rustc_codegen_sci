@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 3;
-pub const PLAN_VERSION: u16 = 11;
+pub const PLAN_VERSION: u16 = 12;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -356,6 +356,12 @@ pub struct ExternFunctionPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallSignaturePlan {
+    pub argument_types: Vec<ScalarType>,
+    pub return_type: Option<ScalarType>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BasicBlockPlan {
     pub id: u32,
     pub operations: Vec<Operation>,
@@ -393,6 +399,13 @@ pub enum TerminatorPlan {
     Call {
         callee: String,
         args: Vec<ValueRef>,
+        destination: Option<u32>,
+        target: u32,
+    },
+    CallIndirect {
+        callee: ValueRef,
+        args: Vec<ValueRef>,
+        signature: CallSignaturePlan,
         destination: Option<u32>,
         target: u32,
     },
@@ -1364,6 +1377,22 @@ impl WireDecode for ExternFunctionPlan {
     }
 }
 
+impl WireEncode for CallSignaturePlan {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.vec(&self.argument_types)?;
+        self.return_type.encode(encoder)
+    }
+}
+
+impl WireDecode for CallSignaturePlan {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            argument_types: decoder.vec()?,
+            return_type: Option::<ScalarType>::decode(decoder)?,
+        })
+    }
+}
+
 impl WireEncode for BasicBlockPlan {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.u32(self.id);
@@ -1451,6 +1480,20 @@ impl WireEncode for TerminatorPlan {
                 destination.encode(encoder)?;
                 encoder.u32(*target);
             }
+            Self::CallIndirect {
+                callee,
+                args,
+                signature,
+                destination,
+                target,
+            } => {
+                encoder.u8(7);
+                callee.encode(encoder)?;
+                encoder.vec(args)?;
+                signature.encode(encoder)?;
+                destination.encode(encoder)?;
+                encoder.u32(*target);
+            }
         }
         Ok(())
     }
@@ -1488,6 +1531,13 @@ impl WireDecode for TerminatorPlan {
                 discr: ValueRef::decode(decoder)?,
                 cases: decoder.vec()?,
                 otherwise: decoder.u32()?,
+            }),
+            7 => Ok(Self::CallIndirect {
+                callee: ValueRef::decode(decoder)?,
+                args: decoder.vec()?,
+                signature: CallSignaturePlan::decode(decoder)?,
+                destination: Option::<u32>::decode(decoder)?,
+                target: decoder.u32()?,
             }),
             tag => Err(ProtocolError::InvalidTag("terminator", tag)),
         }
@@ -1961,6 +2011,47 @@ mod tests {
                                     callee: "host_note_i32".into(),
                                     args: vec![ValueRef::Local(1)],
                                     destination: None,
+                                    target: 1,
+                                },
+                            },
+                            BasicBlockPlan {
+                                id: 1,
+                                operations: Vec::new(),
+                                terminator: TerminatorPlan::Return,
+                            },
+                        ],
+                    },
+                    FunctionPlan {
+                        symbol: "call_fn_ptr_i32".into(),
+                        abi: direct_abi(vec![(8, 8), (4, 4)], Some((4, 4))),
+                        argument_locals: vec![1, 2],
+                        return_local: Some(0),
+                        locals: vec![
+                            LocalPlan {
+                                id: 0,
+                                ty: ScalarType::I32,
+                            },
+                            LocalPlan {
+                                id: 1,
+                                ty: ScalarType::Ptr,
+                            },
+                            LocalPlan {
+                                id: 2,
+                                ty: ScalarType::I32,
+                            },
+                        ],
+                        blocks: vec![
+                            BasicBlockPlan {
+                                id: 0,
+                                operations: Vec::new(),
+                                terminator: TerminatorPlan::CallIndirect {
+                                    callee: ValueRef::Local(1),
+                                    args: vec![ValueRef::Local(2)],
+                                    signature: CallSignaturePlan {
+                                        argument_types: vec![ScalarType::I32],
+                                        return_type: Some(ScalarType::I32),
+                                    },
+                                    destination: Some(0),
                                     target: 1,
                                 },
                             },
