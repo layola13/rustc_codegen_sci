@@ -23,8 +23,10 @@ Baseline: 2026-07-16.
   niches.
 - `9e31b38`: worker-level ABI/type-layout fixture matrix for the current
   validation boundary, plus ABI value size/alignment validation.
-- Current worktree: linked Direct scalar ABI smoke fixture matrix covering
-  C-to-SCI exported functions and SCI-to-C extern calls.
+- `4635c76`: linked Direct scalar ABI smoke fixture matrix covering C-to-SCI
+  exported functions and SCI-to-C extern calls.
+- Current worktree: auditable 33-case Direct scalar ABI suite with signed and
+  unsigned narrow-integer boundary values.
 
 ## Current Increment
 
@@ -50,6 +52,9 @@ Baseline: 2026-07-16.
   host extern calls in the reverse direction.
 - Extended `tests/smoke.sh` so each fixture is compiled, linked, and executed
   through the same backend/worker path.
+- Expanded `abi_direct` into a counted 33-case harness, adding signed i8/i16
+  negative round trips and unsigned u8/u16 high-bit round trips in both
+  C-to-SCI and SCI-to-C directions.
 
 ## Current Boundary
 
@@ -59,8 +64,8 @@ monomorphized type layout recipes, but not dereference, load/store,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
 or non-Direct ABI lowering.
 Worker tests now cover the current serialized ABI and layout validation
-boundary, and the smoke suite now has initial linked Direct scalar ABI coverage.
-The broader 20-30 case bidirectional C/LLVM ABI suite and non-Direct ABI cases
-are still pending.
+boundary, and the smoke suite now has 33 linked Direct scalar ABI cases. The
+broader bidirectional C/LLVM ABI suite still needs non-Direct and aggregate
+coverage.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.

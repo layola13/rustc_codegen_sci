@@ -1,9 +1,13 @@
 #![no_std]
 
 unsafe extern "C" {
+    fn sci_host_abi_i8_identity(value: i8) -> i8;
     fn sci_host_abi_i8_sub(a: i8, b: i8) -> i8;
+    fn sci_host_abi_u8_identity(value: u8) -> u8;
     fn sci_host_abi_u8_xor(a: u8, b: u8) -> u8;
+    fn sci_host_abi_i16_identity(value: i16) -> i16;
     fn sci_host_abi_i16_add(a: i16, b: i16) -> i16;
+    fn sci_host_abi_u16_identity(value: u16) -> u16;
     fn sci_host_abi_u16_or(a: u16, b: u16) -> u16;
     fn sci_host_abi_i32_mul(a: i32, b: i32) -> i32;
     fn sci_host_abi_u32_and(a: u32, b: u32) -> u32;
@@ -16,8 +20,18 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_i8_identity(value: i8) -> i8 {
+    value
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_abi_i8_add(a: i8, b: i8) -> i8 {
     a + b
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_u8_identity(value: u8) -> u8 {
+    value
 }
 
 #[unsafe(no_mangle)]
@@ -26,8 +40,18 @@ pub extern "C" fn sci_abi_u8_xor(a: u8, b: u8) -> u8 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_i16_identity(value: i16) -> i16 {
+    value
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_abi_i16_sub(a: i16, b: i16) -> i16 {
     a - b
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_u16_identity(value: u16) -> u16 {
+    value
 }
 
 #[unsafe(no_mangle)]
@@ -74,8 +98,18 @@ pub extern "C" fn sci_abi_ptr_identity(value: *const i32) -> *const i32 {
 pub extern "C" fn sci_abi_void_noop(_value: i32) {}
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_call_host_i8_identity(value: i8) -> i8 {
+    unsafe { sci_host_abi_i8_identity(value) }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_abi_call_host_i8_sub(a: i8, b: i8) -> i8 {
     unsafe { sci_host_abi_i8_sub(a, b) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_call_host_u8_identity(value: u8) -> u8 {
+    unsafe { sci_host_abi_u8_identity(value) }
 }
 
 #[unsafe(no_mangle)]
@@ -84,8 +118,18 @@ pub extern "C" fn sci_abi_call_host_u8_xor(a: u8, b: u8) -> u8 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_call_host_i16_identity(value: i16) -> i16 {
+    unsafe { sci_host_abi_i16_identity(value) }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sci_abi_call_host_i16_add(a: i16, b: i16) -> i16 {
     unsafe { sci_host_abi_i16_add(a, b) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_abi_call_host_u16_identity(value: u16) -> u16 {
+    unsafe { sci_host_abi_u16_identity(value) }
 }
 
 #[unsafe(no_mangle)]
