@@ -78,13 +78,13 @@ Rust 源码
 - SA text emitter 和 direct SAB emitter 使用同一 canonical plan。
 - SCI Referee 必须在 artifact 写入前通过。
 - rlib/object 输出路径与 rustc archive/link pipeline 保持兼容。
-- proof/work-product manifest 初版：plan hash、object hash、target、policy、engine/schema hash。
+- proof/work-product manifest 初版：plan hash、object hash、target、policy、engine/schema hash（rust-trusted work-product 初版已完成，strict proof sidecar 仍是后续项）。
 
 退出条件：
 
 - clean build、dirty build、no-op build 有稳定结果。
 - direct SAB `--no-fallback` 与 SA text 路径行为一致。
-- object、plan、proof report 不一致时拒绝复用。
+- object、plan、work-product manifest 不一致时拒绝复用；strict proof report 进入后同样纳入复用门禁。
 - smoke + golden + compile-fail 覆盖所有声明能力。
 
 ## M2：no_std + ownership-rich lowering
@@ -220,7 +220,7 @@ WASM 不应在 M0 前做，因为当前 SCI native emitter 不能再依赖 host 
 4. 已完成函数内部 local scalar tuple/struct 的构造、field projection、本地 copy/move，以及空 struct ZST local no-op；aggregate/ZST struct 参数/返回 ABI 仍保持 hard error。
 5. 做 static allocation/relocation 最小闭环，支持字符串与 panic metadata。
 6. 引入 direct SAB no-fallback 路径，与 SA text parity。
-7. 做 proof-aware manifest/cache，不让 stock rustc work-product 路径独自决定复用。
+7. 已完成 rust-trusted work-product manifest/cache 初版，不让 stock rustc work-product 路径独自决定复用；后续补 strict proof sidecar。
 8. 再进入 aggregate/drop/borrow/fat pointer。
 9. 最后推进 Cargo、sysroot、WASM 和 strict proof。
 

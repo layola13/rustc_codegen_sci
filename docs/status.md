@@ -39,6 +39,9 @@ Baseline date: 2026-07-16.
 - Scalar `extern "C"` function pointer indirect calls lower through canonical
   `CallIndirect` terminators carrying explicit scalar argument/return
   signatures, with worker validation and linked C smoke coverage.
+- Initial rust-trusted work-product manifests record plan/object hashes, target,
+  policy, and SCI identity, and the worker reuses content-addressed cached
+  objects only after manifest and object-hash validation.
 - Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.
@@ -70,7 +73,8 @@ Baseline date: 2026-07-16.
 | MIR rvalues | `Use`, scalar raw-pointer load/store including simple field offsets and fixed array element offsets, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |
 | Values | integer/bool/raw-pointer locals, integer/bool constants, and null pointer constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |
-| Proof mode | `rust-trusted` |
+| Work products | manifest sidecars plus content-addressed object cache keyed by canonical plan bytes and SCI identity |
+| Proof mode | `rust-trusted`; no strict ownership proof sidecar yet |
 
 Every missing capability is rejected before object publication.
 
@@ -88,4 +92,4 @@ execution state is tracked in `tasks.md`, `progress.md`, and `current_plan.md`.
    `wasm32-wasip1`.
 5. Allocator shim, `core/alloc/std`, unwind, TLS, SIMD, asm, debug info, LTO,
    sanitizer, and coverage parity.
-6. Proof-aware incremental reuse and the strict proof track.
+6. Strict proof sidecar/refinement certificate and linked-image validation.

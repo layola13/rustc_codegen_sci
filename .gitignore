@@ -6,6 +6,7 @@
 *.rlib
 *.rmeta
 *.sa.bc
+*.sci.manifest.json
 
 # code-index generated artifacts
 .code_index

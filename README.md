@@ -50,7 +50,10 @@ is no LLVM-backend or `bc2sa` fallback. Worker rejections and
 backend-originated fatal diagnostics share a protocol-level `DiagnosticPayload`
 with stable codes and optional function/block/local locations. Lowering errors
 also include MIR block/statement or block/terminator context plus rustc source
-spans for statement/terminator lowering failures.
+spans for statement/terminator lowering failures. The worker writes a
+rust-trusted work-product manifest with plan, object, target, policy, and SCI
+identity hashes, and reuses content-addressed cached objects when the manifest
+and object hash validate.
 
 Build and run the focused smoke gate:
 

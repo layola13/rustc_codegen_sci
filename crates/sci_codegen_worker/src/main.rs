@@ -9,7 +9,8 @@ use sci_protocol::{
     CallingConventionPlan, CompileRequest, CompileResponse, DiagnosticLocation, DiagnosticPayload,
     Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation,
     PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe,
-    TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, read_frame, write_frame,
+    TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, encode_payload,
+    read_frame, write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
@@ -20,6 +21,7 @@ const SUPPORTED_DATA_LAYOUT: &str =
 const SUPPORTED_CPU: &str = "x86-64";
 const SUPPORTED_FEATURES: &str = "";
 const SUPPORTED_RELOCATION_MODEL: &str = "pic";
+const CACHE_POLICY: &str = "rust-trusted-work-product-cache-v1";
 
 fn main() -> ExitCode {
     match run() {
@@ -155,6 +157,9 @@ fn diagnostic_number_after(diagnostic: &str, marker: &str) -> Option<u32> {
 fn compile_request(request: &CompileRequest) -> Result<(), String> {
     validate_module(&request.module)?;
 
+    let module_bytes = encode_payload(&request.module)
+        .map_err(|err| format!("failed to encode module for work-product hashing: {err}"))?;
+    let plan_hash = stable_content_hash(&module_bytes);
     let sa = emit_sa(&request.module)?;
     let output_path = Path::new(&request.output_path);
     let parent = output_path
@@ -177,6 +182,23 @@ fn compile_request(request: &CompileRequest) -> Result<(), String> {
     let sci = std::env::var_os("SCI_BIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/root/projects/sci/zig-out/bin/sa"));
+    let sci_identity = sci_identity(&sci)?;
+    let work_product_hash = work_product_hash(&module_bytes, &sci, &sci_identity);
+    let manifest_path = output_path.with_extension("sci.manifest.json");
+    let cache_paths = cache_paths(output_path, &work_product_hash)?;
+    if reuse_cached_work_product(
+        output_path,
+        &manifest_path,
+        &cache_paths,
+        &request.module,
+        &plan_hash,
+        &work_product_hash,
+        &sci,
+        &sci_identity,
+    )? {
+        return Ok(());
+    }
+
     let output = Command::new(&sci)
         .arg("build-obj")
         .arg(&sa_path)
@@ -200,7 +222,284 @@ fn compile_request(request: &CompileRequest) -> Result<(), String> {
             output_path.display()
         ));
     }
+    let object_bytes = fs::read(output_path).map_err(|err| {
+        format!(
+            "failed to read emitted object {}: {err}",
+            output_path.display()
+        )
+    })?;
+    let object_hash = stable_content_hash(&object_bytes);
+    let manifest = manifest_json(
+        &request.module,
+        &plan_hash,
+        &work_product_hash,
+        &object_hash,
+        &sci,
+        &sci_identity,
+        false,
+    );
+    publish_manifest_and_cache(output_path, &manifest_path, &cache_paths, &manifest)?;
     Ok(())
+}
+
+struct CachePaths {
+    object: PathBuf,
+    manifest: PathBuf,
+}
+
+fn cache_paths(output_path: &Path, work_product_hash: &str) -> Result<CachePaths, String> {
+    let root = if let Some(path) = std::env::var_os("SCI_CODEGEN_CACHE_DIR") {
+        PathBuf::from(path)
+    } else if let Some(root) = std::env::var_os("SCI_WORKSPACE_ROOT") {
+        PathBuf::from(root).join("target").join("sci-cache")
+    } else {
+        output_path
+            .parent()
+            .ok_or_else(|| "object output path has no parent".to_string())?
+            .join(".sci-cache")
+    };
+    let directory = root.join("objects").join(work_product_hash);
+    Ok(CachePaths {
+        object: directory.join("output.o"),
+        manifest: directory.join("manifest.json"),
+    })
+}
+
+fn sci_identity(sci: &Path) -> Result<String, String> {
+    let output = Command::new(sci)
+        .arg("--version")
+        .output()
+        .map_err(|err| format!("failed to execute {} --version: {err}", sci.display()))?;
+    if !output.status.success() {
+        return Err(format!("SCI version probe failed with {}", output.status));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Ok(stdout)
+    } else if stdout.is_empty() {
+        Ok(stderr)
+    } else {
+        Ok(format!("{stdout}; {stderr}"))
+    }
+}
+
+fn work_product_hash(module_bytes: &[u8], sci: &Path, sci_identity: &str) -> String {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(CACHE_POLICY.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(sci.to_string_lossy().as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(sci_identity.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(module_bytes);
+    stable_content_hash(&bytes)
+}
+
+fn reuse_cached_work_product(
+    output_path: &Path,
+    manifest_path: &Path,
+    cache_paths: &CachePaths,
+    module: &SciModulePlan,
+    plan_hash: &str,
+    work_product_hash: &str,
+    sci: &Path,
+    sci_identity: &str,
+) -> Result<bool, String> {
+    if !cache_paths.object.is_file() || !cache_paths.manifest.is_file() {
+        return Ok(false);
+    }
+    let manifest = fs::read_to_string(&cache_paths.manifest).map_err(|err| {
+        format!(
+            "failed to read cached manifest {}: {err}",
+            cache_paths.manifest.display()
+        )
+    })?;
+    if json_field(&manifest, "cache_policy").as_deref() != Some(CACHE_POLICY)
+        || json_field(&manifest, "plan_hash").as_deref() != Some(plan_hash)
+        || json_field(&manifest, "work_product_hash").as_deref() != Some(work_product_hash)
+    {
+        return Ok(false);
+    }
+    let Some(object_hash) = json_field(&manifest, "object_hash") else {
+        return Ok(false);
+    };
+    let object_bytes = fs::read(&cache_paths.object).map_err(|err| {
+        format!(
+            "failed to read cached object {}: {err}",
+            cache_paths.object.display()
+        )
+    })?;
+    if stable_content_hash(&object_bytes) != object_hash {
+        return Ok(false);
+    }
+    fs::copy(&cache_paths.object, output_path).map_err(|err| {
+        format!(
+            "failed to publish cached object {} to {}: {err}",
+            cache_paths.object.display(),
+            output_path.display()
+        )
+    })?;
+    let hit_manifest = manifest_json(
+        module,
+        plan_hash,
+        work_product_hash,
+        &object_hash,
+        sci,
+        sci_identity,
+        true,
+    );
+    fs::write(manifest_path, hit_manifest)
+        .map_err(|err| format!("failed to write {}: {err}", manifest_path.display()))?;
+    Ok(true)
+}
+
+fn publish_manifest_and_cache(
+    output_path: &Path,
+    manifest_path: &Path,
+    cache_paths: &CachePaths,
+    manifest: &str,
+) -> Result<(), String> {
+    fs::write(manifest_path, manifest)
+        .map_err(|err| format!("failed to write {}: {err}", manifest_path.display()))?;
+    if let Some(parent) = cache_paths.object.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create cache directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::copy(output_path, &cache_paths.object).map_err(|err| {
+        format!(
+            "failed to cache object {} to {}: {err}",
+            output_path.display(),
+            cache_paths.object.display()
+        )
+    })?;
+    fs::write(&cache_paths.manifest, manifest).map_err(|err| {
+        format!(
+            "failed to write cached manifest {}: {err}",
+            cache_paths.manifest.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn manifest_json(
+    module: &SciModulePlan,
+    plan_hash: &str,
+    work_product_hash: &str,
+    object_hash: &str,
+    sci: &Path,
+    sci_identity: &str,
+    cache_hit: bool,
+) -> String {
+    format!(
+        concat!(
+            "{{\n",
+            "  \"schema\": \"rustc_codegen_sci.work_product.v1\",\n",
+            "  \"cache_policy\": \"{}\",\n",
+            "  \"cache_hit\": {},\n",
+            "  \"plan_version\": {},\n",
+            "  \"rustc_commit\": \"{}\",\n",
+            "  \"target\": \"{}\",\n",
+            "  \"cgu_name\": \"{}\",\n",
+            "  \"plan_hash\": \"{}\",\n",
+            "  \"work_product_hash\": \"{}\",\n",
+            "  \"object_hash\": \"{}\",\n",
+            "  \"sci_bin\": \"{}\",\n",
+            "  \"sci_identity\": \"{}\"\n",
+            "}}\n"
+        ),
+        json_escape(CACHE_POLICY),
+        cache_hit,
+        module.plan_version,
+        json_escape(&module.rustc_commit),
+        json_escape(&module.target.triple),
+        json_escape(&module.cgu_name),
+        json_escape(plan_hash),
+        json_escape(work_product_hash),
+        json_escape(object_hash),
+        json_escape(&sci.to_string_lossy()),
+        json_escape(sci_identity),
+    )
+}
+
+fn json_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ch if ch.is_control() => {
+                escaped.push_str("\\u");
+                escaped.push_str(&format!("{:04x}", ch as u32));
+            }
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn json_field(document: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\": \"");
+    let rest = document.split_once(&needle)?.1;
+    let mut value = String::new();
+    let mut escaped = false;
+    for ch in rest.chars() {
+        if escaped {
+            match ch {
+                '"' => value.push('"'),
+                '\\' => value.push('\\'),
+                'n' => value.push('\n'),
+                'r' => value.push('\r'),
+                't' => value.push('\t'),
+                other => value.push(other),
+            }
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Some(value),
+            ch => value.push(ch),
+        }
+    }
+    None
+}
+
+fn stable_content_hash(bytes: &[u8]) -> String {
+    const OFFSETS: [u64; 4] = [
+        0xcbf29ce484222325,
+        0x84222325cbf29ce4,
+        0x9e3779b97f4a7c15,
+        0x243f6a8885a308d3,
+    ];
+    const PRIMES: [u64; 4] = [
+        0x100000001b3,
+        0x100000001b3,
+        0x00000100000001b3,
+        0x00000100000001b3,
+    ];
+    let mut state = OFFSETS;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        for lane in 0..state.len() {
+            let mixed = byte
+                .wrapping_add((index as u8).rotate_left(lane as u32))
+                .wrapping_add((lane as u8).wrapping_mul(17));
+            state[lane] ^= u64::from(mixed);
+            state[lane] = state[lane].wrapping_mul(PRIMES[lane]);
+            state[lane] ^= state[lane].rotate_right(29);
+        }
+    }
+    format!(
+        "{:016x}{:016x}{:016x}{:016x}",
+        state[0], state[1], state[2], state[3]
+    )
 }
 
 fn validate_module(module: &SciModulePlan) -> Result<(), String> {
@@ -2002,6 +2301,26 @@ mod tests {
         }
     }
 
+    fn manifest_module() -> SciModulePlan {
+        SciModulePlan {
+            plan_version: PLAN_VERSION,
+            rustc_commit: SUPPORTED_RUSTC_COMMIT.into(),
+            target: supported_target(),
+            cgu_name: "manifest_test".into(),
+            type_layouts: Vec::new(),
+            extern_functions: Vec::new(),
+            functions: Vec::new(),
+        }
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{name}-{}-{nanos}", std::process::id()))
+    }
+
     fn indirect_call_function(signature: CallSignaturePlan) -> FunctionPlan {
         FunctionPlan {
             symbol: "indirect_call_fn".into(),
@@ -2200,6 +2519,67 @@ mod tests {
             err.contains("argument type mismatch"),
             "expected indirect call diagnostic, got `{err}`"
         );
+    }
+
+    #[test]
+    fn cached_work_product_publishes_object_and_manifest() {
+        let temp = unique_temp_dir("sci-worker-cache");
+        let cache_dir = temp.join("cache");
+        let output_dir = temp.join("out");
+        fs::create_dir_all(&cache_dir).expect("cache directory should be created");
+        fs::create_dir_all(&output_dir).expect("output directory should be created");
+
+        let output_path = output_dir.join("module.o");
+        let manifest_path = output_dir.join("module.sci.manifest.json");
+        let cache_paths = CachePaths {
+            object: cache_dir.join("output.o"),
+            manifest: cache_dir.join("manifest.json"),
+        };
+        let module = manifest_module();
+        let object = b"cached-object";
+        let plan_hash = stable_content_hash(b"plan");
+        let work_product_hash = stable_content_hash(b"work-product");
+        let object_hash = stable_content_hash(object);
+        let sci = PathBuf::from("/tmp/sci-test-bin");
+        let sci_identity = "sa 0.test";
+        let manifest = manifest_json(
+            &module,
+            &plan_hash,
+            &work_product_hash,
+            &object_hash,
+            &sci,
+            sci_identity,
+            false,
+        );
+        fs::write(&cache_paths.object, object).expect("cached object should be written");
+        fs::write(&cache_paths.manifest, manifest).expect("cached manifest should be written");
+
+        let reused = reuse_cached_work_product(
+            &output_path,
+            &manifest_path,
+            &cache_paths,
+            &module,
+            &plan_hash,
+            &work_product_hash,
+            &sci,
+            sci_identity,
+        )
+        .expect("cache reuse should not fail");
+
+        assert!(reused, "expected cache hit");
+        assert_eq!(
+            fs::read(&output_path).expect("published object should exist"),
+            object
+        );
+        let published_manifest =
+            fs::read_to_string(&manifest_path).expect("published manifest should exist");
+        assert!(published_manifest.contains("\"cache_hit\": true"));
+        assert_eq!(
+            json_field(&published_manifest, "object_hash").as_deref(),
+            Some(object_hash.as_str())
+        );
+
+        fs::remove_dir_all(temp).expect("temporary cache test directory should be removed");
     }
 
     #[test]

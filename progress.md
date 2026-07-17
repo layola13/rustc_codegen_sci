@@ -48,9 +48,12 @@ Baseline: 2026-07-16.
   and backend fatal diagnostics.
 - `cc094a9`: `PLAN_VERSION = 11` scalar stack allocations with size/alignment
   validation and address-taken local lowering through canonical stack slots.
-- Current increment: `PLAN_VERSION = 12` scalar `extern "C"` function pointer
+- `066f3ed`: `PLAN_VERSION = 12` scalar `extern "C"` function pointer
   indirect calls lower through canonical `CallIndirect` terminators carrying
   explicit scalar argument/return signatures.
+- Current increment: initial rust-trusted work-product manifests plus
+  content-addressed object reuse keyed by canonical plan bytes, cache policy,
+  and SCI identity.
 
 ## Current Increment
 
@@ -169,6 +172,17 @@ Baseline: 2026-07-16.
   unsupported pass-mode function pointer signatures before object publication.
 - Added linked C smoke coverage passing a host callback into SCI-compiled Rust
   and verifying the indirect call result.
+- Added worker-side rust-trusted work-product manifests recording schema,
+  cache policy, plan version, rustc commit, target, CGU name, plan hash,
+  work-product hash, object hash, SCI binary path, and SCI identity.
+- Added content-addressed worker object reuse under
+  `SCI_CODEGEN_CACHE_DIR` or `target/sci-cache`, keyed by canonical module wire
+  bytes plus SCI identity and cache policy.
+- Cache hits validate the cached manifest, plan hash, work-product hash, and
+  object hash before publishing the cached object to rustc's requested output
+  path; the output manifest records `cache_hit: true`.
+- Added worker unit coverage for cached object/manifest publication, and smoke
+  evidence that a second run with the same cache emits cache-hit manifests.
 
 ## Current Boundary
 
@@ -198,4 +212,5 @@ Scalar `extern "C"` function pointer calls now lower through canonical
 `CallIndirect` terminators with explicit scalar signatures; aggregate or
 non-C/variadic/unwinding function pointer calls remain hard errors. Aggregate
 ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof remain
-incomplete.
+incomplete. The work-product cache is a rust-trusted reuse gate and does not yet
+include a strict ownership proof sidecar or linked-image validator.

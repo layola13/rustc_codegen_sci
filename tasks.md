@@ -49,6 +49,8 @@ Baseline: 2026-07-16.
   offsets.
 - [x] Scalar `extern "C"` function pointer indirect calls with explicit
   canonical signatures.
+- [x] Initial rust-trusted work-product manifest and content-addressed object
+  reuse keyed by canonical plan plus SCI identity.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI
@@ -83,7 +85,7 @@ Baseline: 2026-07-16.
 - [x] Add indirect calls with explicit function signatures.
 - [ ] Add aggregate argument/return ABI, including sret/byval.
 - [ ] Add direct SAB no-fallback emission from the canonical plan.
-- [ ] Add proof/work-product manifest and content-addressed reuse.
+- [x] Add proof/work-product manifest and content-addressed reuse.
 
 ## M2 no_std Rust
 
