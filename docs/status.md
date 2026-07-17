@@ -31,6 +31,9 @@ Baseline date: 2026-07-16.
   codes.
 - Backend-originated MIR statement/terminator lowering diagnostics emitted with
   rustc source spans.
+- Worker RPC responses and backend fatal diagnostics share a protocol-level
+  `DiagnosticPayload` carrying stable code, message, and optional
+  function/block/local location.
 - Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.

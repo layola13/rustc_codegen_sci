@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
-pub const RPC_VERSION: u16 = 2;
+pub const RPC_VERSION: u16 = 3;
 pub const PLAN_VERSION: u16 = 10;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
@@ -429,9 +429,14 @@ pub struct CompileRequest {
 pub struct CompileResponse {
     pub request_id: u64,
     pub success: bool,
-    pub diagnostic: String,
-    pub diagnostic_code: String,
-    pub diagnostic_location: Option<DiagnosticLocation>,
+    pub diagnostic: Option<DiagnosticPayload>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticPayload {
+    pub code: String,
+    pub message: String,
+    pub location: Option<DiagnosticLocation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1624,13 +1629,29 @@ impl WireDecode for DiagnosticLocation {
     }
 }
 
+impl WireEncode for DiagnosticPayload {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.string(&self.code)?;
+        encoder.string(&self.message)?;
+        self.location.encode(encoder)
+    }
+}
+
+impl WireDecode for DiagnosticPayload {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            code: decoder.string()?,
+            message: decoder.string()?,
+            location: Option::<DiagnosticLocation>::decode(decoder)?,
+        })
+    }
+}
+
 impl WireEncode for CompileResponse {
     fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
         encoder.u64(self.request_id);
         encoder.u8(u8::from(self.success));
-        encoder.string(&self.diagnostic)?;
-        encoder.string(&self.diagnostic_code)?;
-        self.diagnostic_location.encode(encoder)
+        self.diagnostic.encode(encoder)
     }
 }
 
@@ -1643,9 +1664,7 @@ impl WireDecode for CompileResponse {
                 1 => true,
                 tag => return Err(ProtocolError::InvalidTag("boolean", tag)),
             },
-            diagnostic: decoder.string()?,
-            diagnostic_code: decoder.string()?,
-            diagnostic_location: Option::<DiagnosticLocation>::decode(decoder)?,
+            diagnostic: Option::<DiagnosticPayload>::decode(decoder)?,
         })
     }
 }
@@ -1999,12 +2018,14 @@ mod tests {
         let response = CompileResponse {
             request_id: 42,
             success: false,
-            diagnostic: "function add ABI argument 0 uses unsupported Pair pass mode".into(),
-            diagnostic_code: "SCI_ABI_UNSUPPORTED_PASS_MODE".into(),
-            diagnostic_location: Some(DiagnosticLocation {
-                function: Some("add".into()),
-                block: None,
-                local: Some(1),
+            diagnostic: Some(DiagnosticPayload {
+                code: "SCI_ABI_UNSUPPORTED_PASS_MODE".into(),
+                message: "function add ABI argument 0 uses unsupported Pair pass mode".into(),
+                location: Some(DiagnosticLocation {
+                    function: Some("add".into()),
+                    block: None,
+                    local: Some(1),
+                }),
             }),
         };
         let bytes = encode_payload(&response).unwrap();

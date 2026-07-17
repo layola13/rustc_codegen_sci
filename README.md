@@ -41,11 +41,11 @@ array-index projection through a raw pointer are supported; dynamic indices,
 slices, and whole-aggregate memory operations are not supported yet.
 General aggregate and ZST struct argument/return ABI is still rejected.
 Unsupported targets, ABIs, MIR operations, and features are hard errors. There
-is no LLVM-backend or `bc2sa` fallback. Worker rejections carry structured
-diagnostic codes and coarse locations. Backend-originated fatal diagnostics
-carry stable `SCI_BACKEND_*` codes and lowering errors include MIR
-block/statement or block/terminator context plus rustc source spans for
-statement/terminator lowering failures.
+is no LLVM-backend or `bc2sa` fallback. Worker rejections and
+backend-originated fatal diagnostics share a protocol-level `DiagnosticPayload`
+with stable codes and optional function/block/local locations. Lowering errors
+also include MIR block/statement or block/terminator context plus rustc source
+spans for statement/terminator lowering failures.
 
 Build and run the focused smoke gate:
 

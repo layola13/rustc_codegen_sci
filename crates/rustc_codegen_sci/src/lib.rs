@@ -38,10 +38,11 @@ use rustc_target::spec::PanicStrategy;
 use sci_protocol::{
     AbiPassModePlan, AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan,
     BasicBlockPlan, BinaryOp, CallingConventionPlan, CastOp, CompareOp, CompileRequest,
-    CompileResponse, Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan,
-    LocalPlan, NicheRecipe, Operation, PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan,
-    SwitchCasePlan, TagEncodingRecipe, TargetPlan, TerminatorPlan, TypeLayoutRecipe,
-    ValidRangeRecipe, ValueRef, VariantLayoutRecipe, VariantRecipe, read_frame, write_frame,
+    CompileResponse, DiagnosticLocation, DiagnosticPayload, Endian, ExternFunctionPlan,
+    FieldLayoutRecipe, FnAbiPlan, FunctionPlan, LocalPlan, NicheRecipe, Operation, PLAN_VERSION,
+    ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe, TargetPlan,
+    TerminatorPlan, TypeLayoutRecipe, ValidRangeRecipe, ValueRef, VariantLayoutRecipe,
+    VariantRecipe, read_frame, write_frame,
 };
 
 const BACKEND_NAME: &str = "sci";
@@ -147,22 +148,24 @@ struct SciOngoingCodegen {
 }
 
 struct BackendDiagnostic {
-    message: String,
+    payload: DiagnosticPayload,
     span: Option<Span>,
 }
 
 impl BackendDiagnostic {
     fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            span: None,
-        }
+        Self::with_location(message, None, None)
     }
 
-    fn with_span(message: impl Into<String>, span: Span) -> Self {
+    fn with_location(
+        message: impl Into<String>,
+        location: Option<DiagnosticLocation>,
+        span: Option<Span>,
+    ) -> Self {
+        let message = message.into();
         Self {
-            message: message.into(),
-            span: Some(span),
+            payload: backend_diagnostic_payload(message, location),
+            span,
         }
     }
 }
@@ -174,7 +177,7 @@ impl From<String> for BackendDiagnostic {
 }
 
 fn emit_backend_diagnostic(tcx: TyCtxt<'_>, diagnostic: BackendDiagnostic) -> ! {
-    let message = format_backend_rejection(&diagnostic.message);
+    let message = format_backend_rejection(&diagnostic.payload);
     if let Some(span) = diagnostic.span {
         tcx.dcx().span_fatal(span, message)
     } else {
@@ -362,10 +365,18 @@ fn lower_function<'tcx>(
                     || field_types.len() != 1
                     || scalar_type_size_bytes(field_types[0]) != Some(fn_abi.return_value.size)
                 {
-                    return Err(BackendDiagnostic::new(format!(
-                        "{}: aggregate return ABI is not yet supported",
-                        tcx.symbol_name(instance).name
-                    )));
+                    return Err(BackendDiagnostic::with_location(
+                        format!(
+                            "{}: aggregate return ABI is not yet supported",
+                            tcx.symbol_name(instance).name
+                        ),
+                        Some(DiagnosticLocation {
+                            function: Some(tcx.symbol_name(instance).name.to_string()),
+                            block: None,
+                            local: Some(0),
+                        }),
+                        None,
+                    ));
                 }
             }
             if local.index() != 0 && local.index() <= mir.arg_count {
@@ -374,10 +385,18 @@ fn lower_function<'tcx>(
                     || field_types.len() != 1
                     || scalar_type_size_bytes(field_types[0]) != Some(argument.size)
                 {
-                    return Err(BackendDiagnostic::new(format!(
-                        "{}: aggregate argument ABI is not yet supported",
-                        tcx.symbol_name(instance).name
-                    )));
+                    return Err(BackendDiagnostic::with_location(
+                        format!(
+                            "{}: aggregate argument ABI is not yet supported",
+                            tcx.symbol_name(instance).name
+                        ),
+                        Some(DiagnosticLocation {
+                            function: Some(tcx.symbol_name(instance).name.to_string()),
+                            block: None,
+                            local: Some(local.index() as u32),
+                        }),
+                        None,
+                    ));
                 }
             }
             for (field, ty) in field_types.into_iter().enumerate() {
@@ -385,12 +404,20 @@ fn lower_function<'tcx>(
                 locals.push(LocalPlan { id, ty });
             }
         } else {
-            return Err(BackendDiagnostic::new(format!(
-                "{}: local {:?} has unsupported type `{}`",
-                tcx.symbol_name(instance).name,
-                local,
-                ty
-            )));
+            return Err(BackendDiagnostic::with_location(
+                format!(
+                    "{}: local {:?} has unsupported type `{}`",
+                    tcx.symbol_name(instance).name,
+                    local,
+                    ty
+                ),
+                Some(DiagnosticLocation {
+                    function: Some(tcx.symbol_name(instance).name.to_string()),
+                    block: None,
+                    local: Some(local.index() as u32),
+                }),
+                None,
+            ));
         }
     }
 
@@ -403,10 +430,18 @@ fn lower_function<'tcx>(
         }
         if scalar_aggregate_field_types(tcx, ty).is_some() {
             argument_locals.push(state.tuple_field(local, 0).ok_or_else(|| {
-                BackendDiagnostic::new(format!(
-                    "{}: aggregate argument field is missing a synthetic local",
-                    tcx.symbol_name(instance).name
-                ))
+                BackendDiagnostic::with_location(
+                    format!(
+                        "{}: aggregate argument field is missing a synthetic local",
+                        tcx.symbol_name(instance).name
+                    ),
+                    Some(DiagnosticLocation {
+                        function: Some(tcx.symbol_name(instance).name.to_string()),
+                        block: None,
+                        local: Some(local.index() as u32),
+                    }),
+                    None,
+                )
             })?);
         } else {
             argument_locals.push(local_id(local));
@@ -424,10 +459,18 @@ fn lower_function<'tcx>(
             state
                 .tuple_field(rustc_middle::mir::RETURN_PLACE, 0)
                 .ok_or_else(|| {
-                    BackendDiagnostic::new(format!(
-                        "{}: aggregate return field is missing a synthetic local",
-                        tcx.symbol_name(instance).name
-                    ))
+                    BackendDiagnostic::with_location(
+                        format!(
+                            "{}: aggregate return field is missing a synthetic local",
+                            tcx.symbol_name(instance).name
+                        ),
+                        Some(DiagnosticLocation {
+                            function: Some(tcx.symbol_name(instance).name.to_string()),
+                            block: None,
+                            local: Some(0),
+                        }),
+                        None,
+                    )
                 })?,
         )
     } else {
@@ -518,9 +561,14 @@ fn validate_backend_fn_abi_boundary<'tcx>(
             continue;
         }
         if let Some(mode) = unsupported_backend_pass_mode(&argument.mode) {
-            return Err(BackendDiagnostic::with_span(
+            return Err(BackendDiagnostic::with_location(
                 format!("{symbol}: ABI argument {index} uses unsupported {mode} pass mode"),
-                span,
+                Some(DiagnosticLocation {
+                    function: Some(symbol.to_string()),
+                    block: None,
+                    local: None,
+                }),
+                Some(span),
             ));
         }
     }
@@ -528,9 +576,14 @@ fn validate_backend_fn_abi_boundary<'tcx>(
         return Ok(());
     }
     if let Some(mode) = unsupported_backend_pass_mode(&abi.return_value.mode) {
-        return Err(BackendDiagnostic::with_span(
+        return Err(BackendDiagnostic::with_location(
             format!("{symbol}: ABI return uses unsupported {mode} pass mode"),
-            span,
+            Some(DiagnosticLocation {
+                function: Some(symbol.to_string()),
+                block: None,
+                local: None,
+            }),
+            Some(span),
         ));
     }
     Ok(())
@@ -603,9 +656,14 @@ fn annotate_mir_error<'tcx>(
     let symbol = tcx.symbol_name(instance).name;
     let prefix = format!("{symbol}: ");
     let detail = err.strip_prefix(&prefix).unwrap_or(&err);
-    BackendDiagnostic::with_span(
+    BackendDiagnostic::with_location(
         format!("{symbol}: block {} {site}: {detail}", block.index()),
-        span,
+        Some(DiagnosticLocation {
+            function: Some(symbol.to_string()),
+            block: Some(block.index() as u32),
+            local: None,
+        }),
+        Some(span),
     )
 }
 
@@ -2838,14 +2896,34 @@ fn run_worker(
     Ok(())
 }
 
-fn format_backend_rejection(diagnostic: &str) -> String {
-    if diagnostic.starts_with("SCI worker rejected module") {
-        return diagnostic.to_string();
+fn backend_diagnostic_payload(
+    message: String,
+    location: Option<DiagnosticLocation>,
+) -> DiagnosticPayload {
+    let location = location.or_else(|| backend_diagnostic_location(&message));
+    DiagnosticPayload {
+        code: classify_backend_diagnostic_code(&message).into(),
+        message,
+        location,
+    }
+}
+
+fn format_backend_rejection(diagnostic: &DiagnosticPayload) -> String {
+    if diagnostic.code.is_empty() {
+        return diagnostic.message.clone();
     }
     let mut message = String::from("rustc_codegen_sci backend rejected module [");
-    message.push_str(classify_backend_diagnostic_code(diagnostic));
-    message.push_str("]: ");
-    message.push_str(diagnostic);
+    message.push_str(&diagnostic.code);
+    message.push(']');
+    if let Some(location) = &diagnostic.location {
+        let location = format_diagnostic_location(location);
+        if !location.is_empty() {
+            message.push_str(" at ");
+            message.push_str(&location);
+        }
+    }
+    message.push_str(": ");
+    message.push_str(&diagnostic.message);
     message
 }
 
@@ -2904,12 +2982,16 @@ fn classify_backend_diagnostic_code(diagnostic: &str) -> &'static str {
 
 fn format_worker_rejection(response: &CompileResponse) -> String {
     let mut message = String::from("SCI worker rejected module");
-    if !response.diagnostic_code.is_empty() {
+    if let Some(diagnostic) = &response.diagnostic {
         message.push_str(" [");
-        message.push_str(&response.diagnostic_code);
+        message.push_str(&diagnostic.code);
         message.push(']');
     }
-    if let Some(location) = &response.diagnostic_location {
+    if let Some(location) = response
+        .diagnostic
+        .as_ref()
+        .and_then(|diagnostic| diagnostic.location.as_ref())
+    {
         let location = format_diagnostic_location(location);
         if !location.is_empty() {
             message.push_str(" at ");
@@ -2917,7 +2999,9 @@ fn format_worker_rejection(response: &CompileResponse) -> String {
         }
     }
     message.push_str(": ");
-    message.push_str(&response.diagnostic);
+    if let Some(diagnostic) = &response.diagnostic {
+        message.push_str(&diagnostic.message);
+    }
     message
 }
 
@@ -2933,6 +3017,42 @@ fn format_diagnostic_location(location: &sci_protocol::DiagnosticLocation) -> St
         parts.push(format!("local {local}"));
     }
     parts.join(", ")
+}
+
+fn backend_diagnostic_location(message: &str) -> Option<DiagnosticLocation> {
+    let function = backend_diagnostic_function(message);
+    let block = diagnostic_number_after(message, "block ");
+    let local = diagnostic_number_after(message, "local ");
+    if function.is_none() && block.is_none() && local.is_none() {
+        None
+    } else {
+        Some(DiagnosticLocation {
+            function,
+            block,
+            local,
+        })
+    }
+}
+
+fn backend_diagnostic_function(message: &str) -> Option<String> {
+    if let Some(rest) = message.strip_prefix("function ") {
+        return rest.split_whitespace().next().map(str::to_string);
+    }
+    if let Some(rest) = message.strip_prefix("extern function ") {
+        return rest.split_whitespace().next().map(str::to_string);
+    }
+    message
+        .split_once(':')
+        .and_then(|(name, _)| (!name.contains(char::is_whitespace)).then(|| name.to_string()))
+}
+
+fn diagnostic_number_after(message: &str, marker: &str) -> Option<u32> {
+    let rest = message.split(marker).nth(1)?;
+    let number = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    (!number.is_empty()).then(|| number.parse().ok()).flatten()
 }
 
 #[unsafe(no_mangle)]

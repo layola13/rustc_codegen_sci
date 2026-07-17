@@ -68,11 +68,11 @@ compile_fixture add
 compile_fixture abi_direct
 compile_fixture abi_cast
 compile_fail_fixture abi_pair \
-    "rustc_codegen_sci backend rejected module [SCI_BACKEND_ABI_UNSUPPORTED]: sci_abi_pair_return: ABI return uses unsupported Pair pass mode" \
+    "rustc_codegen_sci backend rejected module [SCI_BACKEND_ABI_UNSUPPORTED] at function \`sci_abi_pair_return\`: sci_abi_pair_return: ABI return uses unsupported Pair pass mode" \
     "tests/fixtures/abi_pair.rs:4:"
 compile_fail_fixture abi_indirect \
-    "rustc_codegen_sci backend rejected module [SCI_BACKEND_ABI_UNSUPPORTED]: sci_abi_indirect_return: ABI return uses unsupported Indirect pass mode" \
+    "rustc_codegen_sci backend rejected module [SCI_BACKEND_ABI_UNSUPPORTED] at function \`sci_abi_indirect_return\`: sci_abi_indirect_return: ABI return uses unsupported Indirect pass mode" \
     "tests/fixtures/abi_indirect.rs:11:"
 compile_fail_fixture unsupported_ref \
-    "rustc_codegen_sci backend rejected module [SCI_BACKEND_MIR_UNSUPPORTED]: sci_unsupported_ref_i32: block 0 statement 0:" \
+    "rustc_codegen_sci backend rejected module [SCI_BACKEND_MIR_UNSUPPORTED] at function \`sci_unsupported_ref_i32\`, block 0: sci_unsupported_ref_i32: block 0 statement 0:" \
     "tests/fixtures/unsupported_ref.rs:5:"

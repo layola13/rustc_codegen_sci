@@ -6,10 +6,10 @@ use std::process::{Command, ExitCode};
 
 use sci_protocol::{
     AbiPassModePlan, AbiRegisterKind, AbiValuePlan, BasicBlockPlan, CallingConventionPlan,
-    CompileRequest, CompileResponse, DiagnosticLocation, Endian, ExternFunctionPlan,
-    FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation, PLAN_VERSION,
-    ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe, TargetPlan,
-    TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, read_frame, write_frame,
+    CompileRequest, CompileResponse, DiagnosticLocation, DiagnosticPayload, Endian,
+    ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation,
+    PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe,
+    TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, read_frame, write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
@@ -47,9 +47,7 @@ fn run_stdio_once() -> Result<(), String> {
         Ok(()) => CompileResponse {
             request_id: request.request_id,
             success: true,
-            diagnostic: String::new(),
-            diagnostic_code: String::new(),
-            diagnostic_location: None,
+            diagnostic: None,
         },
         Err(diagnostic) => classified_response(request.request_id, diagnostic),
     };
@@ -61,9 +59,11 @@ fn classified_response(request_id: u64, diagnostic: String) -> CompileResponse {
     CompileResponse {
         request_id,
         success: false,
-        diagnostic_code: classify_diagnostic_code(&diagnostic).into(),
-        diagnostic_location: diagnostic_location(&diagnostic),
-        diagnostic,
+        diagnostic: Some(DiagnosticPayload {
+            code: classify_diagnostic_code(&diagnostic).into(),
+            location: diagnostic_location(&diagnostic),
+            message: diagnostic,
+        }),
     }
 }
 
@@ -1895,9 +1895,10 @@ mod tests {
 
         assert!(!response.success);
         assert_eq!(response.request_id, 7);
-        assert_eq!(response.diagnostic_code, "SCI_ABI_UNSUPPORTED_PASS_MODE");
+        let diagnostic = response.diagnostic.expect("expected diagnostic payload");
+        assert_eq!(diagnostic.code, "SCI_ABI_UNSUPPORTED_PASS_MODE");
         assert_eq!(
-            response.diagnostic_location,
+            diagnostic.location,
             Some(DiagnosticLocation {
                 function: Some("add".into()),
                 block: None,

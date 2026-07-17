@@ -42,8 +42,11 @@ Baseline: 2026-07-16.
   rustc source spans.
 - `b7f5308`: backend FnAbi preflight rejects unsupported Pair/Cast/Indirect pass
   modes before MIR lowering.
-- Current increment: single-field signed and unsigned 8/16/32/64-bit Cast ABI
+- `9f821b6`: single-field signed and unsigned 8/16/32/64-bit Cast ABI
   arguments and returns lower through scalar registers.
+- Current increment: worker RPC responses and backend fatal diagnostics share a
+  protocol-level `DiagnosticPayload` with stable code and optional
+  function/block/local location.
 
 ## Current Increment
 
@@ -136,6 +139,13 @@ Baseline: 2026-07-16.
 - Extended extern call lowering so SCI-to-C calls can pass and receive the same
   narrow Cast aggregate shapes through scalar call operands/destinations, with
   linked host C smoke coverage.
+- Upgraded the worker RPC response wire shape to `RPC_VERSION = 3`, replacing
+  split diagnostic strings with `DiagnosticPayload { code, message, location }`.
+- Reused the same protocol-level diagnostic payload inside backend-originated
+  fatal diagnostics, including explicit function locations for ABI preflight
+  rejections and function/block locations for MIR lowering failures.
+- Updated compile-fail smoke expectations so backend ABI and MIR diagnostics
+  assert the structured location rendered from the payload.
 
 ## Current Boundary
 
@@ -155,10 +165,10 @@ boundary, and the smoke suite now has 33 linked Direct scalar ABI cases plus
 bidirectional narrow Cast aggregate argument/return coverage. The broader
 C/LLVM ABI suite still needs Pair/Indirect, sret/byval, and wider aggregate
 coverage.
-Worker failures now have structured RPC diagnostic codes and coarse parsed
-locations. Backend-originated lowering failures now include MIR block and
-statement/terminator context, stable fatal diagnostic codes, and rustc source
-spans for statement/terminator lowering failures. Protocol-level structured
-backend diagnostic payloads are still pending.
+Worker failures and backend-originated fatal diagnostics now share a
+protocol-level `DiagnosticPayload` carrying stable code plus optional
+function/block/local location. Backend-originated lowering failures also include
+MIR block and statement/terminator context plus rustc source spans for
+statement/terminator lowering failures.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.
