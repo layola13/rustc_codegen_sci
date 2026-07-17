@@ -1628,17 +1628,21 @@ mod tests {
         })
     }
 
-    fn scalar_cast_abi_value() -> AbiValuePlan {
-        abi_value(AbiPassModePlan::Cast {
-            pad_i32: false,
-            prefix: Vec::new(),
-            rest_offset: None,
-            rest: AbiUniformPlan {
-                unit: integer_register(64),
-                total_bytes: 8,
-                consecutive: true,
+    fn scalar_cast_abi_value(size: u64, align: u64) -> AbiValuePlan {
+        abi_value_with(
+            size,
+            align,
+            AbiPassModePlan::Cast {
+                pad_i32: false,
+                prefix: Vec::new(),
+                rest_offset: None,
+                rest: AbiUniformPlan {
+                    unit: integer_register(size * 8),
+                    total_bytes: size,
+                    consecutive: true,
+                },
             },
-        })
+        )
     }
 
     fn indirect_abi_value() -> AbiValuePlan {
@@ -1931,9 +1935,25 @@ mod tests {
 
     #[test]
     fn scalar_cast_return_is_accepted() {
-        let abi = fn_abi(Vec::new(), scalar_cast_abi_value());
+        for (size, align) in [(1, 1), (2, 2), (4, 4), (8, 8)] {
+            let abi = fn_abi(Vec::new(), scalar_cast_abi_value(size, align));
 
-        validate_fn_abi("test_fn", &abi, 0, true).expect("scalar Cast return should validate");
+            validate_fn_abi("test_fn", &abi, 0, true).unwrap_or_else(|err| {
+                panic!("{size}-byte scalar Cast return should validate, got `{err}`")
+            });
+        }
+    }
+
+    #[test]
+    fn non_scalar_width_cast_return_is_rejected() {
+        let abi = fn_abi(Vec::new(), scalar_cast_abi_value(3, 1));
+        let err = validate_fn_abi("test_fn", &abi, 0, true)
+            .expect_err("3-byte Cast return should be rejected");
+
+        assert!(
+            err.contains("unsupported Cast"),
+            "expected unsupported Cast diagnostic, got `{err}`"
+        );
     }
 
     #[test]

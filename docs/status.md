@@ -21,8 +21,8 @@ Baseline date: 2026-07-16.
   publication.
 - Backend compile-fail smoke coverage for real rustc Pair/Cast/Indirect
   pass-mode rejection before MIR lowering/object emission.
-- Narrow Cast ABI return lowering for a single-scalar aggregate returned in one
-  integer register, with linked C smoke coverage.
+- Narrow Cast ABI return lowering for single-field `u8`/`u16`/`u32`/`u64`
+  aggregates returned in one integer register, with linked C smoke coverage.
 - Versioned framed worker RPC with bounded frame sizes.
 - Backend-originated lowering diagnostics annotated with MIR block and
   statement/terminator context.
@@ -54,7 +54,7 @@ Baseline date: 2026-07-16.
 | Target | `x86_64-unknown-linux-gnu` with explicit ELF object format, rustc DataLayout, `x86-64` CPU, empty target features, PIC relocation model, and default code model |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
-| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted; one scalar Cast aggregate return is lowered through the scalar return register; Pair/Indirect and unsupported Cast cases are serialized but rejected until implemented; backend preflight rejects unsupported non-Direct definitions before MIR lowering; simple scalar raw-pointer deref/load/store, scalar field projection, and fixed scalar array-index projection are supported |
+| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted; single-field `u8`/`u16`/`u32`/`u64` Cast aggregate returns are lowered through the scalar return register; Pair/Indirect and unsupported Cast cases are serialized but rejected until implemented; backend preflight rejects unsupported non-Direct definitions before MIR lowering; simple scalar raw-pointer deref/load/store, scalar field projection, and fixed scalar array-index projection are supported |
 | Type Layout | monomorphized rustc `LayoutData` recipes for local and extern signature types, including size/alignment, fields, variants, niches, and scalar valid ranges |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls with unreachable unwind |
