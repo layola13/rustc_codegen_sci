@@ -63,4 +63,5 @@ compile_fail_fixture() {
 
 compile_fixture add
 compile_fixture abi_direct
-compile_fail_fixture unsupported_ref "sci_unsupported_ref_i32: block 0 statement 0:"
+compile_fail_fixture unsupported_ref \
+    "rustc_codegen_sci backend rejected module [SCI_BACKEND_MIR_UNSUPPORTED]: sci_unsupported_ref_i32: block 0 statement 0:"

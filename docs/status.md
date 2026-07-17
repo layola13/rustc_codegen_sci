@@ -21,6 +21,8 @@ Baseline date: 2026-07-16.
 - Versioned framed worker RPC with bounded frame sizes.
 - Backend-originated lowering diagnostics annotated with MIR block and
   statement/terminator context.
+- Backend-originated fatal diagnostics classified with stable `SCI_BACKEND_*`
+  codes.
 - Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.

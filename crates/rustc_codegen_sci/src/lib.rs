@@ -122,7 +122,7 @@ impl CodegenBackend for SciCodegenBackend {
     fn codegen_crate<'tcx>(&self, tcx: TyCtxt<'tcx>) -> Box<dyn Any> {
         let modules = match codegen_crate(tcx) {
             Ok(modules) => modules,
-            Err(err) => tcx.dcx().fatal(err),
+            Err(err) => tcx.dcx().fatal(format_backend_rejection(&err)),
         };
         Box::new(SciOngoingCodegen { modules })
     }
@@ -2594,6 +2594,70 @@ fn run_worker(
         ));
     }
     Ok(())
+}
+
+fn format_backend_rejection(diagnostic: &str) -> String {
+    if diagnostic.starts_with("SCI worker rejected module") {
+        return diagnostic.to_string();
+    }
+    let mut message = String::from("rustc_codegen_sci backend rejected module [");
+    message.push_str(classify_backend_diagnostic_code(diagnostic));
+    message.push_str("]: ");
+    message.push_str(diagnostic);
+    message
+}
+
+fn classify_backend_diagnostic_code(diagnostic: &str) -> &'static str {
+    if diagnostic.contains("unsupported MIR")
+        || diagnostic.contains("unsupported rvalue")
+        || diagnostic.contains("unsupported operand")
+        || diagnostic.contains("unsupported binary operation")
+        || diagnostic.contains("unsupported unary operation")
+        || diagnostic.contains("unsupported cast kind")
+        || diagnostic.contains("unsupported deref projection")
+        || diagnostic.contains("projected place")
+        || diagnostic.contains("dynamic memory index")
+    {
+        "SCI_BACKEND_MIR_UNSUPPORTED"
+    } else if diagnostic.contains("ABI")
+        || diagnostic.contains("FnAbi")
+        || diagnostic.contains("extern callee")
+        || diagnostic.contains("aggregate argument")
+        || diagnostic.contains("aggregate return")
+        || diagnostic.contains("zero-sized struct function ABI")
+        || diagnostic.contains("unit function arguments")
+    {
+        "SCI_BACKEND_ABI_UNSUPPORTED"
+    } else if diagnostic.contains("layout")
+        || diagnostic.contains("field")
+        || diagnostic.contains("variant")
+        || diagnostic.contains("niche")
+        || diagnostic.contains("alignment")
+    {
+        "SCI_BACKEND_LAYOUT_ERROR"
+    } else if diagnostic.contains("static mono item")
+        || diagnostic.contains("allocation")
+        || diagnostic.contains("relocation")
+    {
+        "SCI_BACKEND_STATIC_UNSUPPORTED"
+    } else if diagnostic.contains("target")
+        || diagnostic.contains("pointer width")
+        || diagnostic.contains("relocation model")
+        || diagnostic.contains("code model")
+    {
+        "SCI_BACKEND_TARGET_UNSUPPORTED"
+    } else if diagnostic.contains("SCI worker")
+        || diagnostic.contains("SCI compile request")
+        || diagnostic.contains("object")
+        || diagnostic.contains("failed to start")
+        || diagnostic.contains("failed to open")
+        || diagnostic.contains("failed to read")
+        || diagnostic.contains("failed to wait")
+    {
+        "SCI_BACKEND_IO"
+    } else {
+        "SCI_BACKEND_REJECTED"
+    }
 }
 
 fn format_worker_rejection(response: &CompileResponse) -> String {

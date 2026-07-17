@@ -39,8 +39,9 @@ whole-aggregate memory operations are not supported yet.
 Aggregate and ZST struct argument/return ABI is still rejected. Unsupported
 targets, ABIs, MIR operations, and features are hard errors. There is no
 LLVM-backend or `bc2sa` fallback. Worker rejections carry structured diagnostic
-codes and coarse locations, and backend lowering errors include MIR
-block/statement or block/terminator context.
+codes and coarse locations. Backend-originated fatal diagnostics carry stable
+`SCI_BACKEND_*` codes and lowering errors include MIR block/statement or
+block/terminator context.
 
 Build and run the focused smoke gate:
 
