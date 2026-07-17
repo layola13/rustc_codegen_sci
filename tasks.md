@@ -20,6 +20,8 @@ Baseline: 2026-07-16.
   variadic/unwind flags, and Ignore/Direct/Pair/Cast/Indirect pass modes.
 - [x] Worker ABI boundary tests rejecting Pair/Cast/Indirect before object
   emission.
+- [x] Backend FnAbi preflight rejects unsupported Pair/Cast/Indirect pass modes
+  with source spans before MIR lowering/object emission.
 - [x] Worker-level ABI/type-layout fixture matrix for the current serialized
   validation boundary.
 - [x] Linked Direct scalar ABI smoke fixture matrix covering C-to-SCI exports and
@@ -47,6 +49,8 @@ Baseline: 2026-07-16.
 - [x] Add `TypeLayoutRecipe` with size, alignment, fields, variants, and niches.
 - [x] Add `FnAbiPlan` with Ignore, Direct, Pair, Cast, and Indirect pass modes.
 - [x] Add worker-level negative tests for unsupported non-Direct ABI modes.
+- [x] Add backend compile-fail fixtures for real rustc Pair/Cast/Indirect
+  pass-mode rejection.
 - [x] Add initial linked bidirectional Direct scalar ABI fixtures.
 - [x] Count and execute 20+ linked Direct ABI fixture cases in the smoke gate.
 - [x] Add structured worker diagnostic codes to RPC responses.

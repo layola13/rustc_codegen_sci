@@ -327,6 +327,8 @@ fn lower_function<'tcx>(
     module_state: &mut ModuleLoweringState,
 ) -> Result<FunctionPlan, BackendDiagnostic> {
     let mir = tcx.instance_mir(instance.def);
+    let fn_abi = lower_fn_abi_plan(tcx, instance)?;
+    validate_backend_fn_abi_boundary(tcx, instance, &fn_abi)?;
 
     let mut state = LoweringState::new(mir.local_decls.len());
     let mut locals = Vec::with_capacity(mir.local_decls.len());
@@ -464,12 +466,45 @@ fn lower_function<'tcx>(
 
     Ok(FunctionPlan {
         symbol: tcx.symbol_name(instance).name.to_string(),
-        abi: lower_fn_abi_plan(tcx, instance)?,
+        abi: fn_abi,
         argument_locals,
         return_local,
         locals,
         blocks,
     })
+}
+
+fn validate_backend_fn_abi_boundary<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    abi: &FnAbiPlan,
+) -> Result<(), BackendDiagnostic> {
+    let symbol = tcx.symbol_name(instance).name;
+    let span = tcx.def_span(instance.def_id());
+    for (index, argument) in abi.arguments.iter().enumerate() {
+        if let Some(mode) = unsupported_backend_pass_mode(&argument.mode) {
+            return Err(BackendDiagnostic::with_span(
+                format!("{symbol}: ABI argument {index} uses unsupported {mode} pass mode"),
+                span,
+            ));
+        }
+    }
+    if let Some(mode) = unsupported_backend_pass_mode(&abi.return_value.mode) {
+        return Err(BackendDiagnostic::with_span(
+            format!("{symbol}: ABI return uses unsupported {mode} pass mode"),
+            span,
+        ));
+    }
+    Ok(())
+}
+
+fn unsupported_backend_pass_mode(mode: &AbiPassModePlan) -> Option<&'static str> {
+    match mode {
+        AbiPassModePlan::Ignore | AbiPassModePlan::Direct => None,
+        AbiPassModePlan::Pair => Some("Pair"),
+        AbiPassModePlan::Cast { .. } => Some("Cast"),
+        AbiPassModePlan::Indirect { .. } => Some("Indirect"),
+    }
 }
 
 fn annotate_mir_statement_error<'tcx>(

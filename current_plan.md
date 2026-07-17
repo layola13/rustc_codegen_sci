@@ -16,10 +16,12 @@ No LLVM backend fallback and no `bc2sa` fallback.
 
 1. Build 20-30 bidirectional C/LLVM ABI fixtures over the serialized rustc
    `FnAbiPlan` and `TypeLayoutRecipe`; the worker-level ABI/layout fixture
-   matrix covers the current validation boundary, and the linked smoke suite now
-   has 33 counted Direct scalar C-to-SCI and SCI-to-C cases.
+   matrix and backend Pair/Cast/Indirect compile-fail fixtures cover the current
+   validation boundary, and the linked smoke suite now has 33 counted Direct
+   scalar C-to-SCI and SCI-to-C cases.
 2. Implement the first Pair/Cast/Indirect C ABI fixtures and aggregate return/arg
-   lowering against rustc `FnAbi` evidence.
+   lowering against rustc `FnAbi` evidence; current smoke coverage already
+   rejects Cast/Indirect C ABI and Pair Rust ABI returns before MIR lowering.
 3. Extend structured diagnostics from worker RPC codes/coarse locations and
    backend fatal codes plus MIR block/statement contexts/source spans to
    protocol-level backend diagnostic payloads.

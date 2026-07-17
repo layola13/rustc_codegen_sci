@@ -38,8 +38,10 @@ Baseline: 2026-07-16.
   statement/terminator context.
 - `a093e1a`: backend-originated fatal diagnostics are classified with stable
   `SCI_BACKEND_*` codes.
-- Current increment: backend-originated MIR statement/terminator lowering errors
-  emit rustc source spans.
+- `7efc32b`: backend-originated MIR statement/terminator lowering errors emit
+  rustc source spans.
+- Current increment: backend FnAbi preflight rejects unsupported Pair/Cast/
+  Indirect pass modes before MIR lowering.
 
 ## Current Increment
 
@@ -106,6 +108,12 @@ Baseline: 2026-07-16.
 - Emitted statement and terminator lowering failures through `span_fatal` using
   MIR `SourceInfo`, and extended the compile-fail smoke fixture to assert the
   source file and line are present.
+- Added backend FnAbi preflight over the rustc-derived `FnAbiPlan` so unsupported
+  Pair/Cast/Indirect pass modes are rejected with backend ABI diagnostic codes
+  and definition spans before local/MIR lowering.
+- Added compile-fail smoke fixtures covering a real Cast C ABI return, a real
+  Indirect C ABI return, and a real Pair Rust ABI return from the current
+  rustc/x86_64 ABI classifier.
 
 ## Current Boundary
 
@@ -116,7 +124,8 @@ load/store dereferences, scalar field projections after raw-pointer dereference,
 and fixed scalar array-index projections after raw-pointer dereference. It does
 not yet support dynamic array indices, slices, whole-aggregate memory copies,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
-or non-Direct ABI lowering.
+or non-Direct ABI lowering. Unsupported Pair/Cast/Indirect pass modes are now
+rejected in backend FnAbi preflight before MIR lowering/object emission.
 Worker tests now cover the current serialized ABI and layout validation
 boundary, and the smoke suite now has 33 linked Direct scalar ABI cases. The
 broader bidirectional C/LLVM ABI suite still needs non-Direct and aggregate

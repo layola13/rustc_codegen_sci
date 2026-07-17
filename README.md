@@ -32,10 +32,12 @@ object format, CPU/features, relocation model, and code model, plus
 monomorphized `TypeLayoutRecipe` records and rustc-derived `FnAbiPlan` metadata
 for function definitions and extern calls; the worker accepts only the currently
 implemented Ignore/Direct pass modes and rejects Pair/Cast/Indirect before
-object publication. Simple scalar raw-pointer load/store dereference, scalar
-field projection through a raw pointer, and fixed scalar array-index projection
-through a raw pointer are supported; dynamic indices, slices, and
-whole-aggregate memory operations are not supported yet.
+object publication. The backend also preflights rustc `FnAbiPlan` pass modes and
+rejects unsupported Pair/Cast/Indirect definitions before MIR lowering. Simple
+scalar raw-pointer load/store dereference, scalar field projection through a raw
+pointer, and fixed scalar array-index projection through a raw pointer are
+supported; dynamic indices, slices, and whole-aggregate memory operations are
+not supported yet.
 Aggregate and ZST struct argument/return ABI is still rejected. Unsupported
 targets, ABIs, MIR operations, and features are hard errors. There is no
 LLVM-backend or `bc2sa` fallback. Worker rejections carry structured diagnostic
