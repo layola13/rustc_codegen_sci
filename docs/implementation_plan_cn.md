@@ -214,8 +214,8 @@ WASM 不应在 M0 前做，因为当前 SCI native emitter 不能再依赖 host 
 ## 立即执行顺序
 
 1. 已完成 `Assert`、div/rem/shift/unary、multi-way switch、checked add/sub/mul 覆盖到 64 位整数和 smoke 扩展。
-2. 已升级到 `PLAN_VERSION = 8`，包含完整 x86_64 Linux target descriptor（object format、rustc DataLayout、CPU/features、relocation/code model）、模块级 extern function plan、void return/call plan、raw pointer direct ABI 类型，以及 rustc-derived `FnAbiPlan`（layout、calling convention、variadic/unwind、Ignore/Direct/Pair/Cast/Indirect pass mode tags）。
-3. 当前增量已完成直接标量/raw pointer/void `extern "C"` 调用、null pointer、pointer `Eq`/`Ne`、thin `PtrToPtr` copy、完整 target descriptor worker 校验，以及 Ignore/Direct ABI worker 校验和 Pair/Cast/Indirect 负向测试；下一步做 `TypeLayoutRecipe` 和 20-30 个 ABI fixture，优先 Pair/Cast/Indirect/sret/byval。
+2. 已升级到 `PLAN_VERSION = 9`，包含完整 x86_64 Linux target descriptor（object format、rustc DataLayout、CPU/features、relocation/code model）、`TypeLayoutRecipe`（size/align、field shape、variant/tag encoding、largest niche、scalar valid ranges）、模块级 extern function plan、void return/call plan、raw pointer direct ABI 类型，以及 rustc-derived `FnAbiPlan`（layout、calling convention、variadic/unwind、Ignore/Direct/Pair/Cast/Indirect pass mode tags）。
+3. 当前增量已完成直接标量/raw pointer/void `extern "C"` 调用、null pointer、pointer `Eq`/`Ne`、thin `PtrToPtr` copy、完整 target descriptor 和 type layout worker 校验，以及 Ignore/Direct ABI worker 校验和 Pair/Cast/Indirect 负向测试；下一步做 20-30 个 ABI fixture，优先 Pair/Cast/Indirect/sret/byval。
 4. 已完成函数内部 local scalar tuple/struct 的构造、field projection、本地 copy/move，以及空 struct ZST local no-op；aggregate/ZST struct 参数/返回 ABI 仍保持 hard error。
 5. 做 static allocation/relocation 最小闭环，支持字符串与 panic metadata。
 6. 引入 direct SAB no-fallback 路径，与 SA text parity。

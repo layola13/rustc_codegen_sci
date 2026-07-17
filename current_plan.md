@@ -14,17 +14,16 @@ No LLVM backend fallback and no `bc2sa` fallback.
 
 ## Current Window
 
-1. Add `TypeLayoutRecipe` wire schema and backend lowering for scalar,
-   tuple/struct field layout, variants, and niches.
-2. Build 20-30 ABI fixtures over the serialized rustc `FnAbiPlan`, starting
+1. Build 20-30 ABI fixtures over the serialized rustc `FnAbiPlan` and
+   `TypeLayoutRecipe`, starting
    with real Rust aggregate arg/return cases once lowering reaches worker
    validation.
-3. Implement the first Pair/Indirect C ABI fixtures and aggregate return/arg
+2. Implement the first Pair/Indirect C ABI fixtures and aggregate return/arg
    lowering against rustc `FnAbi` evidence.
-4. Add target-qualified stack/load/store plans with size and alignment, then
+3. Add target-qualified stack/load/store plans with size and alignment, then
    connect local aggregates to memory representation.
-5. Add allocation images and relocations for statics, strings, and panic data.
-6. Add direct SAB no-fallback emission from the same canonical plan.
+4. Add allocation images and relocations for statics, strings, and panic data.
+5. Add direct SAB no-fallback emission from the same canonical plan.
 
 ## Exit Gates
 

@@ -14,6 +14,8 @@ Baseline: 2026-07-16.
 - [x] Null raw-pointer constants, pointer `Eq`/`Ne`, and thin `PtrToPtr` copy.
 - [x] Complete target descriptor and rustc DataLayout serialization with
   worker-side contract validation.
+- [x] `TypeLayoutRecipe` wire schema and backend lowering for size/alignment,
+  scalar valid ranges, fields, variants, and niches.
 - [x] `FnAbiPlan` wire schema carrying rustc layout, calling convention,
   variadic/unwind flags, and Ignore/Direct/Pair/Cast/Indirect pass modes.
 - [x] Worker ABI boundary tests rejecting Pair/Cast/Indirect before object
@@ -23,7 +25,7 @@ Baseline: 2026-07-16.
 ## M0 Protocol And ABI
 
 - [x] Serialize complete target descriptor and rustc DataLayout.
-- [ ] Add `TypeLayoutRecipe` with size, alignment, fields, variants, and niches.
+- [x] Add `TypeLayoutRecipe` with size, alignment, fields, variants, and niches.
 - [x] Add `FnAbiPlan` with Ignore, Direct, Pair, Cast, and Indirect pass modes.
 - [x] Add worker-level negative tests for unsupported non-Direct ABI modes.
 - [ ] Implement Pair/Cast/Indirect ABI lowering and object emission.

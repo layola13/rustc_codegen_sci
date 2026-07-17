@@ -29,10 +29,10 @@ raw pointer null constants, equality/inequality, and thin pointer-to-pointer
 copies are supported. The canonical plan now carries a complete target
 descriptor for the current x86_64 Linux slice, including rustc DataLayout,
 object format, CPU/features, relocation model, and code model, plus
-rustc-derived `FnAbiPlan` metadata for function definitions and extern calls;
-the worker accepts only the currently implemented Ignore/Direct pass modes and
-rejects Pair/Cast/Indirect before object publication. Pointer load/store/deref
-is not supported yet.
+monomorphized `TypeLayoutRecipe` records and rustc-derived `FnAbiPlan` metadata
+for function definitions and extern calls; the worker accepts only the currently
+implemented Ignore/Direct pass modes and rejects Pair/Cast/Indirect before
+object publication. Pointer load/store/deref is not supported yet.
 Aggregate and ZST struct argument/return ABI is still rejected. Unsupported
 targets, ABIs, MIR operations, and features are hard errors. There is no
 LLVM-backend or `bc2sa` fallback.

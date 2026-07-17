@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 1;
-pub const PLAN_VERSION: u16 = 8;
+pub const PLAN_VERSION: u16 = 9;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,6 +174,86 @@ pub struct LocalPlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidRangeRecipe {
+    pub start: u128,
+    pub end: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScalarLayoutRecipe {
+    pub primitive: String,
+    pub valid_range: Option<ValidRangeRecipe>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FieldLayoutRecipe {
+    Primitive,
+    Union {
+        count: u32,
+    },
+    Array {
+        stride: u64,
+        count: u64,
+    },
+    Arbitrary {
+        offsets: Vec<u64>,
+        memory_order: Vec<u32>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NicheRecipe {
+    pub offset: u64,
+    pub primitive: String,
+    pub valid_range: ValidRangeRecipe,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TagEncodingRecipe {
+    Direct,
+    Niche {
+        untagged_variant: u32,
+        niche_start: u128,
+        niche_variants_start: u32,
+        niche_variants_end: u32,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VariantLayoutRecipe {
+    pub index: u32,
+    pub size: u64,
+    pub align: u64,
+    pub fields: FieldLayoutRecipe,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VariantRecipe {
+    Empty,
+    Single {
+        index: u32,
+    },
+    Multiple {
+        tag: ScalarLayoutRecipe,
+        tag_field: u32,
+        tag_encoding: TagEncodingRecipe,
+        variants: Vec<VariantLayoutRecipe>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypeLayoutRecipe {
+    pub ty: String,
+    pub size: u64,
+    pub align: u64,
+    pub uninhabited: bool,
+    pub fields: FieldLayoutRecipe,
+    pub variants: VariantRecipe,
+    pub largest_niche: Option<NicheRecipe>,
+    pub scalar_valid_ranges: Vec<ScalarLayoutRecipe>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CallingConventionPlan {
     C,
     Rust,
@@ -318,6 +398,7 @@ pub struct SciModulePlan {
     pub rustc_commit: String,
     pub target: TargetPlan,
     pub cgu_name: String,
+    pub type_layouts: Vec<TypeLayoutRecipe>,
     pub extern_functions: Vec<ExternFunctionPlan>,
     pub functions: Vec<FunctionPlan>,
 }
@@ -412,6 +493,10 @@ impl Encoder {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
+    fn u128(&mut self, value: u128) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
     fn string(&mut self, value: &str) -> Result<(), ProtocolError> {
         let len = u32::try_from(value.len())
             .map_err(|_| ProtocolError::InvalidData("string exceeds u32 length"))?;
@@ -484,6 +569,12 @@ impl<'a> Decoder<'a> {
         ))
     }
 
+    fn u128(&mut self) -> Result<u128, ProtocolError> {
+        Ok(u128::from_le_bytes(
+            self.take(16)?.try_into().expect("fixed-size slice"),
+        ))
+    }
+
     fn string(&mut self) -> Result<String, ProtocolError> {
         let len = usize::try_from(self.u32()?)
             .map_err(|_| ProtocolError::InvalidData("string length overflow"))?;
@@ -524,6 +615,19 @@ impl WireEncode for u64 {
 impl WireDecode for u64 {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
         decoder.u64()
+    }
+}
+
+impl WireEncode for u128 {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.u128(*self);
+        Ok(())
+    }
+}
+
+impl WireDecode for u128 {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        decoder.u128()
     }
 }
 
@@ -735,6 +839,230 @@ impl WireDecode for LocalPlan {
         Ok(Self {
             id: decoder.u32()?,
             ty: ScalarType::decode(decoder)?,
+        })
+    }
+}
+
+impl WireEncode for ValidRangeRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.u128(self.start);
+        encoder.u128(self.end);
+        Ok(())
+    }
+}
+
+impl WireDecode for ValidRangeRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            start: decoder.u128()?,
+            end: decoder.u128()?,
+        })
+    }
+}
+
+impl WireEncode for ScalarLayoutRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.string(&self.primitive)?;
+        self.valid_range.encode(encoder)
+    }
+}
+
+impl WireDecode for ScalarLayoutRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            primitive: decoder.string()?,
+            valid_range: Option::<ValidRangeRecipe>::decode(decoder)?,
+        })
+    }
+}
+
+impl WireEncode for FieldLayoutRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        match self {
+            Self::Primitive => encoder.u8(1),
+            Self::Union { count } => {
+                encoder.u8(2);
+                encoder.u32(*count);
+            }
+            Self::Array { stride, count } => {
+                encoder.u8(3);
+                encoder.u64(*stride);
+                encoder.u64(*count);
+            }
+            Self::Arbitrary {
+                offsets,
+                memory_order,
+            } => {
+                encoder.u8(4);
+                encoder.vec(offsets)?;
+                encoder.vec(memory_order)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl WireDecode for FieldLayoutRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        match decoder.u8()? {
+            1 => Ok(Self::Primitive),
+            2 => Ok(Self::Union {
+                count: decoder.u32()?,
+            }),
+            3 => Ok(Self::Array {
+                stride: decoder.u64()?,
+                count: decoder.u64()?,
+            }),
+            4 => Ok(Self::Arbitrary {
+                offsets: decoder.vec()?,
+                memory_order: decoder.vec()?,
+            }),
+            tag => Err(ProtocolError::InvalidTag("field layout", tag)),
+        }
+    }
+}
+
+impl WireEncode for NicheRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.u64(self.offset);
+        encoder.string(&self.primitive)?;
+        self.valid_range.encode(encoder)
+    }
+}
+
+impl WireDecode for NicheRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            offset: decoder.u64()?,
+            primitive: decoder.string()?,
+            valid_range: ValidRangeRecipe::decode(decoder)?,
+        })
+    }
+}
+
+impl WireEncode for TagEncodingRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        match self {
+            Self::Direct => encoder.u8(1),
+            Self::Niche {
+                untagged_variant,
+                niche_start,
+                niche_variants_start,
+                niche_variants_end,
+            } => {
+                encoder.u8(2);
+                encoder.u32(*untagged_variant);
+                encoder.u128(*niche_start);
+                encoder.u32(*niche_variants_start);
+                encoder.u32(*niche_variants_end);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl WireDecode for TagEncodingRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        match decoder.u8()? {
+            1 => Ok(Self::Direct),
+            2 => Ok(Self::Niche {
+                untagged_variant: decoder.u32()?,
+                niche_start: decoder.u128()?,
+                niche_variants_start: decoder.u32()?,
+                niche_variants_end: decoder.u32()?,
+            }),
+            tag => Err(ProtocolError::InvalidTag("tag encoding", tag)),
+        }
+    }
+}
+
+impl WireEncode for VariantLayoutRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.u32(self.index);
+        encoder.u64(self.size);
+        encoder.u64(self.align);
+        self.fields.encode(encoder)
+    }
+}
+
+impl WireDecode for VariantLayoutRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            index: decoder.u32()?,
+            size: decoder.u64()?,
+            align: decoder.u64()?,
+            fields: FieldLayoutRecipe::decode(decoder)?,
+        })
+    }
+}
+
+impl WireEncode for VariantRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        match self {
+            Self::Empty => encoder.u8(1),
+            Self::Single { index } => {
+                encoder.u8(2);
+                encoder.u32(*index);
+            }
+            Self::Multiple {
+                tag,
+                tag_field,
+                tag_encoding,
+                variants,
+            } => {
+                encoder.u8(3);
+                tag.encode(encoder)?;
+                encoder.u32(*tag_field);
+                tag_encoding.encode(encoder)?;
+                encoder.vec(variants)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl WireDecode for VariantRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        match decoder.u8()? {
+            1 => Ok(Self::Empty),
+            2 => Ok(Self::Single {
+                index: decoder.u32()?,
+            }),
+            3 => Ok(Self::Multiple {
+                tag: ScalarLayoutRecipe::decode(decoder)?,
+                tag_field: decoder.u32()?,
+                tag_encoding: TagEncodingRecipe::decode(decoder)?,
+                variants: decoder.vec()?,
+            }),
+            tag => Err(ProtocolError::InvalidTag("variant layout", tag)),
+        }
+    }
+}
+
+impl WireEncode for TypeLayoutRecipe {
+    fn encode(&self, encoder: &mut Encoder) -> Result<(), ProtocolError> {
+        encoder.string(&self.ty)?;
+        encoder.u64(self.size);
+        encoder.u64(self.align);
+        encoder.u8(u8::from(self.uninhabited));
+        self.fields.encode(encoder)?;
+        self.variants.encode(encoder)?;
+        self.largest_niche.encode(encoder)?;
+        encoder.vec(&self.scalar_valid_ranges)
+    }
+}
+
+impl WireDecode for TypeLayoutRecipe {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            ty: decoder.string()?,
+            size: decoder.u64()?,
+            align: decoder.u64()?,
+            uninhabited: decode_bool(decoder, "type layout uninhabited")?,
+            fields: FieldLayoutRecipe::decode(decoder)?,
+            variants: VariantRecipe::decode(decoder)?,
+            largest_niche: Option::<NicheRecipe>::decode(decoder)?,
+            scalar_valid_ranges: decoder.vec()?,
         })
     }
 }
@@ -1140,6 +1468,7 @@ impl WireEncode for SciModulePlan {
         encoder.string(&self.rustc_commit)?;
         self.target.encode(encoder)?;
         encoder.string(&self.cgu_name)?;
+        encoder.vec(&self.type_layouts)?;
         encoder.vec(&self.extern_functions)?;
         encoder.vec(&self.functions)
     }
@@ -1156,6 +1485,7 @@ impl WireDecode for SciModulePlan {
             rustc_commit: decoder.string()?,
             target: TargetPlan::decode(decoder)?,
             cgu_name: decoder.string()?,
+            type_layouts: decoder.vec()?,
             extern_functions: decoder.vec()?,
             functions: decoder.vec()?,
         })
@@ -1326,6 +1656,105 @@ mod tests {
                     code_model: None,
                 },
                 cgu_name: "add".into(),
+                type_layouts: vec![
+                    TypeLayoutRecipe {
+                        ty: "i32".into(),
+                        size: 4,
+                        align: 4,
+                        uninhabited: false,
+                        fields: FieldLayoutRecipe::Primitive,
+                        variants: VariantRecipe::Single { index: 0 },
+                        largest_niche: None,
+                        scalar_valid_ranges: vec![ScalarLayoutRecipe {
+                            primitive: "Int(I32, true)".into(),
+                            valid_range: Some(ValidRangeRecipe {
+                                start: 0,
+                                end: u32::MAX.into(),
+                            }),
+                        }],
+                    },
+                    TypeLayoutRecipe {
+                        ty: "(i32, bool)".into(),
+                        size: 8,
+                        align: 4,
+                        uninhabited: false,
+                        fields: FieldLayoutRecipe::Arbitrary {
+                            offsets: vec![0, 4],
+                            memory_order: vec![0, 1],
+                        },
+                        variants: VariantRecipe::Single { index: 0 },
+                        largest_niche: Some(NicheRecipe {
+                            offset: 4,
+                            primitive: "Int(I8, false)".into(),
+                            valid_range: ValidRangeRecipe { start: 0, end: 1 },
+                        }),
+                        scalar_valid_ranges: vec![
+                            ScalarLayoutRecipe {
+                                primitive: "Int(I32, true)".into(),
+                                valid_range: Some(ValidRangeRecipe {
+                                    start: 0,
+                                    end: u32::MAX.into(),
+                                }),
+                            },
+                            ScalarLayoutRecipe {
+                                primitive: "Int(I8, false)".into(),
+                                valid_range: Some(ValidRangeRecipe { start: 0, end: 1 }),
+                            },
+                        ],
+                    },
+                    TypeLayoutRecipe {
+                        ty: "Option<&i32>".into(),
+                        size: 8,
+                        align: 8,
+                        uninhabited: false,
+                        fields: FieldLayoutRecipe::Arbitrary {
+                            offsets: vec![0],
+                            memory_order: vec![0],
+                        },
+                        variants: VariantRecipe::Multiple {
+                            tag: ScalarLayoutRecipe {
+                                primitive: "Pointer(AddressSpace(0))".into(),
+                                valid_range: Some(ValidRangeRecipe { start: 1, end: u64::MAX.into() }),
+                            },
+                            tag_field: 0,
+                            tag_encoding: TagEncodingRecipe::Niche {
+                                untagged_variant: 1,
+                                niche_start: 0,
+                                niche_variants_start: 0,
+                                niche_variants_end: 0,
+                            },
+                            variants: vec![
+                                VariantLayoutRecipe {
+                                    index: 0,
+                                    size: 8,
+                                    align: 8,
+                                    fields: FieldLayoutRecipe::Arbitrary {
+                                        offsets: Vec::new(),
+                                        memory_order: Vec::new(),
+                                    },
+                                },
+                                VariantLayoutRecipe {
+                                    index: 1,
+                                    size: 8,
+                                    align: 8,
+                                    fields: FieldLayoutRecipe::Arbitrary {
+                                        offsets: vec![0],
+                                        memory_order: vec![0],
+                                    },
+                                },
+                            ],
+                        },
+                        largest_niche: Some(NicheRecipe {
+                            offset: 0,
+                            primitive: "Pointer(AddressSpace(0))".into(),
+                            valid_range: ValidRangeRecipe { start: 1, end: u64::MAX.into() },
+                        }),
+                        scalar_valid_ranges: vec![ScalarLayoutRecipe {
+                            primitive: "Pointer(AddressSpace(0))".into(),
+                            valid_range: Some(ValidRangeRecipe { start: 1, end: u64::MAX.into() }),
+                        }],
+                    },
+                ],
                 extern_functions: vec![
                     ExternFunctionPlan {
                         symbol: "host_add_i32".into(),

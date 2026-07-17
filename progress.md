@@ -15,26 +15,32 @@ Baseline: 2026-07-16.
   `PtrToPtr` copies, and project-local task/progress/current-plan tracking.
 - `f7d864e`: rustc-derived `FnAbiPlan` serialization on defined/extern
   functions and worker validation for currently implemented ABI modes.
-- Current worktree: `PLAN_VERSION = 8` target descriptor serialization covering
-  object format, rustc DataLayout, CPU/features, relocation model, and code
-  model, with worker-side contract validation.
+- `6a169b4`: `PLAN_VERSION = 8` target descriptor serialization covering object
+  format, rustc DataLayout, CPU/features, relocation model, and code model,
+  with worker-side contract validation.
+- Current worktree: `PLAN_VERSION = 9` `TypeLayoutRecipe` wire schema and
+  backend lowering for size/alignment, scalar valid ranges, fields, variants,
+  and niches.
 
 ## Current Increment
 
-- Upgraded the canonical protocol to `PLAN_VERSION = 8`.
-- Extended `TargetPlan` beyond triple/pointer/endian to carry object format,
-  rustc DataLayout, CPU, target features, relocation model, and code model.
-- Lowered the rustc session target descriptor into every `SciModulePlan`.
-- Added backend gates for custom target CPU/features that are not implemented
-  by the current x86_64 bring-up slice.
-- Added worker validation for the complete supported target contract and unit
-  coverage for accepted descriptors and DataLayout mismatch rejection.
+- Upgraded the canonical protocol to `PLAN_VERSION = 9`.
+- Added `TypeLayoutRecipe` with size, alignment, uninhabited flag, field shape,
+  variant/tag encoding, largest niche, and backend scalar valid ranges.
+- Lowered monomorphized MIR local layouts and extern signature layouts from
+  rustc `LayoutData` into every `SciModulePlan`.
+- Added worker-side layout recipe validation for malformed field memory order,
+  bad alignment, duplicate type recipes, malformed variant metadata, and empty
+  scalar primitive names.
+- Avoided rustc pretty type printing in layout keys to keep codegen out of
+  `trimmed_def_paths` diagnostic state.
 
 ## Current Boundary
 
-The backend supports direct pointer values, serializes rustc ABI evidence, and
-serializes the current x86_64 Linux target descriptor/DataLayout, but not
-dereference, load/store, provenance-changing casts, nonzero pointer constants,
-allocations, relocations, TypeLayoutRecipe, or non-Direct ABI lowering.
+The backend supports direct pointer values, serializes rustc ABI evidence,
+serializes the current x86_64 Linux target descriptor/DataLayout, and carries
+monomorphized type layout recipes, but not dereference, load/store,
+provenance-changing casts, nonzero pointer constants, allocations, relocations,
+or non-Direct ABI lowering.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.

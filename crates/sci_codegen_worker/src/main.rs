@@ -6,8 +6,9 @@ use std::process::{Command, ExitCode};
 
 use sci_protocol::{
     AbiPassModePlan, BasicBlockPlan, CallingConventionPlan, CompileRequest, CompileResponse,
-    Endian, ExternFunctionPlan, FnAbiPlan, FunctionPlan, Operation, PLAN_VERSION, ScalarType,
-    SciModulePlan, SwitchCasePlan, TargetPlan, TerminatorPlan, ValueRef, read_frame, write_frame,
+    Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation,
+    PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe,
+    TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, read_frame, write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
@@ -125,6 +126,17 @@ fn validate_module(module: &SciModulePlan) -> Result<(), String> {
     if module.functions.is_empty() {
         return Err("module contains no functions".into());
     }
+    let type_layouts: BTreeMap<&str, &TypeLayoutRecipe> = module
+        .type_layouts
+        .iter()
+        .map(|layout| (layout.ty.as_str(), layout))
+        .collect();
+    if type_layouts.len() != module.type_layouts.len() {
+        return Err("module contains duplicate type layout recipes".into());
+    }
+    for layout in &module.type_layouts {
+        validate_type_layout(layout)?;
+    }
     let functions: BTreeMap<&str, &FunctionPlan> = module
         .functions
         .iter()
@@ -154,6 +166,192 @@ fn validate_module(module: &SciModulePlan) -> Result<(), String> {
         validate_function(function, &functions, &extern_functions)?;
     }
     Ok(())
+}
+
+fn validate_type_layout(layout: &TypeLayoutRecipe) -> Result<(), String> {
+    if layout.ty.is_empty() {
+        return Err("type layout recipe has empty type name".into());
+    }
+    validate_size_align("type layout", layout.size, layout.align)?;
+    validate_field_layout("type layout", layout.size, &layout.fields)?;
+    validate_variant_layout(layout)?;
+    if let Some(niche) = &layout.largest_niche {
+        validate_niche("type layout largest niche", layout.size, niche)?;
+    }
+    for scalar in &layout.scalar_valid_ranges {
+        validate_scalar_layout("type layout scalar", scalar)?;
+    }
+    Ok(())
+}
+
+fn validate_size_align(context: &str, size: u64, align: u64) -> Result<(), String> {
+    if align == 0 || !align.is_power_of_two() {
+        return Err(format!("{context} has invalid alignment {align}"));
+    }
+    if size > 0 && size % align != 0 {
+        return Err(format!(
+            "{context} size {size} is not a multiple of alignment {align}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_field_layout(
+    context: &str,
+    size: u64,
+    fields: &FieldLayoutRecipe,
+) -> Result<(), String> {
+    match fields {
+        FieldLayoutRecipe::Primitive => Ok(()),
+        FieldLayoutRecipe::Union { count } => {
+            if *count == 0 {
+                return Err(format!("{context} union field count is zero"));
+            }
+            Ok(())
+        }
+        FieldLayoutRecipe::Array { stride, count } => {
+            let bytes = stride.checked_mul(*count).ok_or_else(|| {
+                format!("{context} array field layout overflows: {stride} * {count}")
+            })?;
+            if bytes > size {
+                return Err(format!(
+                    "{context} array field bytes {bytes} exceed layout size {size}"
+                ));
+            }
+            Ok(())
+        }
+        FieldLayoutRecipe::Arbitrary {
+            offsets,
+            memory_order,
+        } => {
+            if offsets.len() != memory_order.len() {
+                return Err(format!(
+                    "{context} field offsets and memory order lengths differ"
+                ));
+            }
+            let mut seen = BTreeSet::new();
+            for field in memory_order {
+                let index = usize::try_from(*field)
+                    .map_err(|_| format!("{context} memory-order field index overflows"))?;
+                if index >= offsets.len() {
+                    return Err(format!(
+                        "{context} memory-order field {field} is out of range"
+                    ));
+                }
+                if !seen.insert(*field) {
+                    return Err(format!(
+                        "{context} memory-order field {field} appears more than once"
+                    ));
+                }
+            }
+            for offset in offsets {
+                if *offset > size {
+                    return Err(format!(
+                        "{context} field offset {offset} exceeds layout size {size}"
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_variant_layout(layout: &TypeLayoutRecipe) -> Result<(), String> {
+    match &layout.variants {
+        VariantRecipe::Empty => {
+            if !layout.uninhabited {
+                return Err(format!(
+                    "type layout `{}` has empty variants but is inhabited",
+                    layout.ty
+                ));
+            }
+            Ok(())
+        }
+        VariantRecipe::Single { .. } => Ok(()),
+        VariantRecipe::Multiple {
+            tag,
+            tag_field,
+            tag_encoding,
+            variants,
+        } => {
+            validate_scalar_layout("type layout variant tag", tag)?;
+            if let Some(field_count) = field_count(&layout.fields)
+                && usize::try_from(*tag_field).map_or(true, |field| field >= field_count)
+            {
+                return Err(format!(
+                    "type layout `{}` variant tag field {} is out of range",
+                    layout.ty, tag_field
+                ));
+            }
+            validate_tag_encoding(tag_encoding)?;
+            if variants.is_empty() {
+                return Err(format!(
+                    "type layout `{}` has multiple variants but no variant layouts",
+                    layout.ty
+                ));
+            }
+            let mut seen = BTreeSet::new();
+            for variant in variants {
+                if !seen.insert(variant.index) {
+                    return Err(format!(
+                        "type layout `{}` repeats variant {}",
+                        layout.ty, variant.index
+                    ));
+                }
+                validate_size_align("variant layout", variant.size, variant.align)?;
+                validate_field_layout("variant layout", variant.size, &variant.fields)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_scalar_layout(context: &str, scalar: &ScalarLayoutRecipe) -> Result<(), String> {
+    if scalar.primitive.is_empty() {
+        return Err(format!("{context} has empty primitive"));
+    }
+    Ok(())
+}
+
+fn validate_niche(context: &str, size: u64, niche: &NicheRecipe) -> Result<(), String> {
+    if niche.primitive.is_empty() {
+        return Err(format!("{context} has empty primitive"));
+    }
+    if niche.offset >= size && size != 0 {
+        return Err(format!(
+            "{context} offset {} is outside layout size {size}",
+            niche.offset
+        ));
+    }
+    Ok(())
+}
+
+fn validate_tag_encoding(encoding: &TagEncodingRecipe) -> Result<(), String> {
+    match encoding {
+        TagEncodingRecipe::Direct => Ok(()),
+        TagEncodingRecipe::Niche {
+            niche_variants_start,
+            niche_variants_end,
+            ..
+        } => {
+            if niche_variants_start > niche_variants_end {
+                return Err(format!(
+                    "niche tag variant range {}..={} is inverted",
+                    niche_variants_start, niche_variants_end
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn field_count(fields: &FieldLayoutRecipe) -> Option<usize> {
+    match fields {
+        FieldLayoutRecipe::Primitive => Some(0),
+        FieldLayoutRecipe::Union { count } => usize::try_from(*count).ok(),
+        FieldLayoutRecipe::Array { count, .. } => usize::try_from(*count).ok(),
+        FieldLayoutRecipe::Arbitrary { offsets, .. } => Some(offsets.len()),
+    }
 }
 
 fn validate_target(target: &TargetPlan) -> Result<(), String> {
@@ -1228,6 +1426,32 @@ mod tests {
         }
     }
 
+    fn scalar_layout() -> ScalarLayoutRecipe {
+        ScalarLayoutRecipe {
+            primitive: "Int(I32, true)".into(),
+            valid_range: Some(sci_protocol::ValidRangeRecipe {
+                start: 0,
+                end: u32::MAX.into(),
+            }),
+        }
+    }
+
+    fn struct_layout() -> TypeLayoutRecipe {
+        TypeLayoutRecipe {
+            ty: "(i32, i32)".into(),
+            size: 8,
+            align: 4,
+            uninhabited: false,
+            fields: FieldLayoutRecipe::Arbitrary {
+                offsets: vec![0, 4],
+                memory_order: vec![0, 1],
+            },
+            variants: VariantRecipe::Single { index: 0 },
+            largest_niche: None,
+            scalar_valid_ranges: vec![scalar_layout(), scalar_layout()],
+        }
+    }
+
     fn assert_abi_error_contains(abi: FnAbiPlan, expected: &str) {
         let err = validate_fn_abi("test_fn", &abi, abi.arguments.len(), false)
             .expect_err("ABI should be rejected");
@@ -1261,6 +1485,26 @@ mod tests {
         assert!(
             err.contains("unsupported target data layout"),
             "expected data-layout diagnostic, got `{err}`"
+        );
+    }
+
+    #[test]
+    fn struct_type_layout_recipe_is_accepted() {
+        validate_type_layout(&struct_layout()).expect("type layout should validate");
+    }
+
+    #[test]
+    fn malformed_type_layout_memory_order_is_rejected() {
+        let mut layout = struct_layout();
+        layout.fields = FieldLayoutRecipe::Arbitrary {
+            offsets: vec![0, 4],
+            memory_order: vec![0, 0],
+        };
+
+        let err = validate_type_layout(&layout).expect_err("type layout should be rejected");
+        assert!(
+            err.contains("appears more than once"),
+            "expected memory-order diagnostic, got `{err}`"
         );
     }
 

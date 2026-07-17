@@ -10,13 +10,16 @@ Baseline date: 2026-07-16.
 - Canonical SCI lowering-plan data model.
 - Complete x86_64 Linux target descriptor serialization, including object
   format, rustc DataLayout, CPU/features, relocation model, and code model.
+- `TypeLayoutRecipe` serialization for monomorphized rustc layouts, including
+  size/alignment, field shape, variant/tag encoding, largest niche, and scalar
+  valid ranges.
 - rustc-derived `FnAbiPlan` metadata serialized for defined and extern
   functions, including layout, calling convention, variadic/unwind flags, and
   Ignore/Direct/Pair/Cast/Indirect pass mode tags.
 - Worker unit coverage for the ABI boundary: Direct/Ignore is accepted and
   Pair/Cast/Indirect is rejected before object publication.
 - Versioned framed worker RPC with bounded frame sizes.
-- Worker-side target descriptor and plan validation.
+- Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.
 - Rustc CGU traversal, MIR lowering, worker invocation, and object artifact
@@ -40,6 +43,7 @@ Baseline date: 2026-07-16.
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
 | Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted, Pair/Cast/Indirect are serialized but rejected until implemented; pointer deref/load/store is not supported yet |
+| Type Layout | monomorphized rustc `LayoutData` recipes for local and extern signature types, including size/alignment, fields, variants, niches, and scalar valid ranges |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls with unreachable unwind |
 | MIR rvalues | `Use`, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |

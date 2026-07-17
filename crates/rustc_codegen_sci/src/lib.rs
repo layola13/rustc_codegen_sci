@@ -15,7 +15,11 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use rustc_abi::{CanonAbi, Endian as RustcEndian, ExternAbi, Reg, RegKind};
+use rustc_abi::{
+    BackendRepr, CanonAbi, Endian as RustcEndian, ExternAbi, FieldIdx as LayoutFieldIdx,
+    FieldsShape, Niche, Primitive, Reg, RegKind, Scalar as RustcScalar, TagEncoding,
+    VariantIdx as LayoutVariantIdx, Variants,
+};
 use rustc_codegen_ssa::back::write::produce_final_output_artifacts;
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind, TargetConfig};
@@ -34,9 +38,10 @@ use rustc_target::spec::PanicStrategy;
 use sci_protocol::{
     AbiPassModePlan, AbiRegisterKind, AbiRegisterPlan, AbiUniformPlan, AbiValuePlan,
     BasicBlockPlan, BinaryOp, CallingConventionPlan, CastOp, CompareOp, CompileRequest,
-    CompileResponse, Endian, ExternFunctionPlan, FnAbiPlan, FunctionPlan, LocalPlan, Operation,
-    PLAN_VERSION, ScalarType, SciModulePlan, SwitchCasePlan, TargetPlan, TerminatorPlan, ValueRef,
-    read_frame, write_frame,
+    CompileResponse, Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan,
+    LocalPlan, NicheRecipe, Operation, PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan,
+    SwitchCasePlan, TagEncodingRecipe, TargetPlan, TerminatorPlan, TypeLayoutRecipe,
+    ValidRangeRecipe, ValueRef, VariantLayoutRecipe, VariantRecipe, read_frame, write_frame,
 };
 
 const BACKEND_NAME: &str = "sci";
@@ -207,6 +212,7 @@ fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
                 code_model: tcx.sess.code_model().map(|model| model.to_string()),
             },
             cgu_name: cgu_name.clone(),
+            type_layouts: module_state.type_layouts.into_values().collect(),
             extern_functions: module_state.extern_functions.into_values().collect(),
             functions,
         };
@@ -242,6 +248,7 @@ fn codegen_crate<'tcx>(tcx: TyCtxt<'tcx>) -> Result<CompiledModules, String> {
 #[derive(Default)]
 struct ModuleLoweringState {
     extern_functions: BTreeMap<String, ExternFunctionPlan>,
+    type_layouts: BTreeMap<String, TypeLayoutRecipe>,
 }
 
 impl ModuleLoweringState {
@@ -262,6 +269,20 @@ impl ModuleLoweringState {
             .insert(extern_function.symbol.clone(), extern_function);
         Ok(())
     }
+
+    fn register_type_layout<'tcx>(
+        &mut self,
+        tcx: TyCtxt<'tcx>,
+        ty: Ty<'tcx>,
+    ) -> Result<(), String> {
+        let key = layout_type_name(ty);
+        if self.type_layouts.contains_key(&key) {
+            return Ok(());
+        }
+        let recipe = lower_type_layout_recipe(tcx, ty)?;
+        self.type_layouts.insert(key, recipe);
+        Ok(())
+    }
 }
 
 fn lower_function<'tcx>(
@@ -275,6 +296,7 @@ fn lower_function<'tcx>(
     let mut locals = Vec::with_capacity(mir.local_decls.len());
     for (local, decl) in mir.local_decls.iter_enumerated() {
         let ty = monomorphize_ty(tcx, instance, decl.ty);
+        module_state.register_type_layout(tcx, ty)?;
         if let Some(ty) = scalar_type_for_ty(ty) {
             locals.push(LocalPlan {
                 id: local_id(local),
@@ -523,15 +545,17 @@ fn lower_terminator<'tcx>(
                 .map(|arg| lower_operand(tcx, instance, mir, state, &arg.node))
                 .collect::<Result<Vec<_>, _>>()?;
             if tcx.is_foreign_item(callee.def_id()) {
-                module_state.register_extern_function(lower_extern_function(
+                let extern_function = lower_extern_function(
                     tcx,
                     instance,
                     callee,
+                    module_state,
                     mir,
                     func,
                     args.len(),
                     destination,
-                )?)?;
+                )?;
+                module_state.register_extern_function(extern_function)?;
             }
             Ok(TerminatorPlan::Call {
                 callee: callee_symbol,
@@ -594,6 +618,7 @@ fn lower_extern_function<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: Instance<'tcx>,
     callee: Instance<'tcx>,
+    module_state: &mut ModuleLoweringState,
     mir: &Body<'tcx>,
     func: &Operand<'tcx>,
     lowered_arg_count: usize,
@@ -634,6 +659,7 @@ fn lower_extern_function<'tcx>(
     let mut argument_types = Vec::with_capacity(signature_input_count);
     for input in signature_inputs {
         let ty = monomorphize_ty(tcx, caller, *input);
+        module_state.register_type_layout(tcx, ty)?;
         let scalar = scalar_type_for_ty(ty).ok_or_else(|| {
             format!(
                 "{}: extern callee `{}` argument has unsupported type `{}`",
@@ -646,7 +672,9 @@ fn lower_extern_function<'tcx>(
     }
 
     let sig_return_ty = monomorphize_ty(tcx, caller, sig.output().skip_binder());
+    module_state.register_type_layout(tcx, sig_return_ty)?;
     let destination_ty = monomorphize_ty(tcx, caller, destination.ty(&mir.local_decls, tcx).ty);
+    module_state.register_type_layout(tcx, destination_ty)?;
     let return_type = if is_unit_ty(sig_return_ty) {
         if !is_unit_ty(destination_ty) {
             return Err(format!(
@@ -775,6 +803,176 @@ fn lower_abi_register(reg: Reg) -> AbiRegisterPlan {
         },
         bits: reg.size.bits(),
     }
+}
+
+fn lower_type_layout_recipe<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+) -> Result<TypeLayoutRecipe, String> {
+    let layout = tcx
+        .layout_of(ty::TypingEnv::fully_monomorphized().as_query_input(ty))
+        .map_err(|err| format!("failed to compute layout for `{:?}`: {err:?}", ty.kind()))?;
+    Ok(TypeLayoutRecipe {
+        ty: layout_type_name(ty),
+        size: layout.size.bytes(),
+        align: layout.align.abi.bytes(),
+        uninhabited: layout.uninhabited,
+        fields: lower_field_layout_recipe(&layout.fields)?,
+        variants: lower_variant_recipe(&layout.variants, layout.align.abi.bytes())?,
+        largest_niche: layout.largest_niche.map(lower_niche_recipe),
+        scalar_valid_ranges: lower_backend_repr_scalars(&layout.backend_repr),
+    })
+}
+
+fn lower_field_layout_recipe(
+    fields: &FieldsShape<LayoutFieldIdx>,
+) -> Result<FieldLayoutRecipe, String> {
+    Ok(match fields {
+        FieldsShape::Primitive => FieldLayoutRecipe::Primitive,
+        FieldsShape::Union(count) => FieldLayoutRecipe::Union {
+            count: u32::try_from(count.get())
+                .map_err(|_| "union field count exceeds u32".to_string())?,
+        },
+        FieldsShape::Array { stride, count } => FieldLayoutRecipe::Array {
+            stride: stride.bytes(),
+            count: *count,
+        },
+        FieldsShape::Arbitrary {
+            offsets,
+            in_memory_order,
+        } => FieldLayoutRecipe::Arbitrary {
+            offsets: offsets.iter().map(|offset| offset.bytes()).collect(),
+            memory_order: in_memory_order
+                .iter()
+                .map(|field| {
+                    u32::try_from(field.index()).map_err(|_| "field index exceeds u32".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+    })
+}
+
+fn lower_variant_recipe(
+    variants: &Variants<LayoutFieldIdx, LayoutVariantIdx>,
+    parent_align: u64,
+) -> Result<VariantRecipe, String> {
+    Ok(match variants {
+        Variants::Empty => VariantRecipe::Empty,
+        Variants::Single { index } => VariantRecipe::Single {
+            index: u32::try_from(index.index())
+                .map_err(|_| "single variant index exceeds u32".to_string())?,
+        },
+        Variants::Multiple {
+            tag,
+            tag_encoding,
+            tag_field,
+            variants,
+        } => VariantRecipe::Multiple {
+            tag: lower_scalar_layout_recipe_for_protocol(*tag),
+            tag_field: u32::try_from(tag_field.index())
+                .map_err(|_| "tag field index exceeds u32".to_string())?,
+            tag_encoding: lower_tag_encoding_recipe(tag_encoding)?,
+            variants: variants
+                .iter()
+                .enumerate()
+                .map(|(index, variant)| {
+                    let offsets = variant
+                        .field_offsets
+                        .iter()
+                        .map(|offset| offset.bytes())
+                        .collect::<Vec<_>>();
+                    let memory_order = (0..offsets.len())
+                        .map(|field| {
+                            u32::try_from(field)
+                                .map_err(|_| "variant field index exceeds u32".to_string())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(VariantLayoutRecipe {
+                        index: u32::try_from(index)
+                            .map_err(|_| "variant index exceeds u32".to_string())?,
+                        size: variant.size.bytes(),
+                        align: parent_align,
+                        fields: FieldLayoutRecipe::Arbitrary {
+                            offsets,
+                            memory_order,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        },
+    })
+}
+
+fn lower_tag_encoding_recipe(
+    encoding: &TagEncoding<LayoutVariantIdx>,
+) -> Result<TagEncodingRecipe, String> {
+    Ok(match encoding {
+        TagEncoding::Direct => TagEncodingRecipe::Direct,
+        TagEncoding::Niche {
+            untagged_variant,
+            niche_variants,
+            niche_start,
+        } => TagEncodingRecipe::Niche {
+            untagged_variant: u32::try_from(untagged_variant.index())
+                .map_err(|_| "untagged variant index exceeds u32".to_string())?,
+            niche_start: *niche_start,
+            niche_variants_start: u32::try_from(niche_variants.start.index())
+                .map_err(|_| "niche start variant index exceeds u32".to_string())?,
+            niche_variants_end: u32::try_from(niche_variants.last.index())
+                .map_err(|_| "niche end variant index exceeds u32".to_string())?,
+        },
+    })
+}
+
+fn lower_backend_repr_scalars(repr: &BackendRepr) -> Vec<ScalarLayoutRecipe> {
+    match repr {
+        BackendRepr::Scalar(scalar) => vec![lower_scalar_layout_recipe_for_protocol(*scalar)],
+        BackendRepr::ScalarPair { a, b, .. } => vec![
+            lower_scalar_layout_recipe_for_protocol(*a),
+            lower_scalar_layout_recipe_for_protocol(*b),
+        ],
+        BackendRepr::SimdVector { element, .. }
+        | BackendRepr::SimdScalableVector { element, .. } => {
+            vec![lower_scalar_layout_recipe_for_protocol(*element)]
+        }
+        BackendRepr::Memory { .. } => Vec::new(),
+    }
+}
+
+fn lower_scalar_layout_recipe_for_protocol(scalar: RustcScalar) -> ScalarLayoutRecipe {
+    match scalar {
+        RustcScalar::Initialized { value, valid_range } => ScalarLayoutRecipe {
+            primitive: lower_primitive_name(value),
+            valid_range: Some(lower_valid_range_recipe(valid_range)),
+        },
+        RustcScalar::Union { value } => ScalarLayoutRecipe {
+            primitive: lower_primitive_name(value),
+            valid_range: None,
+        },
+    }
+}
+
+fn lower_niche_recipe(niche: Niche) -> NicheRecipe {
+    NicheRecipe {
+        offset: niche.offset.bytes(),
+        primitive: lower_primitive_name(niche.value),
+        valid_range: lower_valid_range_recipe(niche.valid_range),
+    }
+}
+
+fn lower_valid_range_recipe(range: rustc_abi::WrappingRange) -> ValidRangeRecipe {
+    ValidRangeRecipe {
+        start: range.start,
+        end: range.end,
+    }
+}
+
+fn lower_primitive_name(primitive: Primitive) -> String {
+    format!("{primitive:?}")
+}
+
+fn layout_type_name(ty: Ty<'_>) -> String {
+    format!("{:?}", ty.kind())
 }
 
 fn lower_assignment<'tcx>(
