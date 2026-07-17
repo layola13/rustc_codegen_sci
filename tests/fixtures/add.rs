@@ -11,6 +11,12 @@ struct ScalarPair {
     right: i32,
 }
 
+#[repr(C)]
+pub struct FfiPair {
+    left: i32,
+    right: i32,
+}
+
 struct EmptyMarker;
 
 #[unsafe(no_mangle)]
@@ -109,6 +115,27 @@ pub extern "C" fn sci_replace_i32(slot: *mut i32, value: i32) -> i32 {
     let old = unsafe { *slot };
     unsafe {
         *slot = value;
+    }
+    old
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_load_pair_right(pair: *const FfiPair) -> i32 {
+    unsafe { (*pair).right }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_store_pair_left(pair: *mut FfiPair, value: i32) {
+    unsafe {
+        (*pair).left = value;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sci_replace_pair_right(pair: *mut FfiPair, value: i32) -> i32 {
+    let old = unsafe { (*pair).right };
+    unsafe {
+        (*pair).right = value;
     }
     old
 }

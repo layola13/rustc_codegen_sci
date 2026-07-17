@@ -42,11 +42,11 @@ Baseline date: 2026-07-16.
 | Target | `x86_64-unknown-linux-gnu` with explicit ELF object format, rustc DataLayout, `x86-64` CPU, empty target features, PIC relocation model, and default code model |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
-| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted, Pair/Cast/Indirect are serialized but rejected until implemented; simple scalar raw-pointer deref/load/store is supported |
+| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted, Pair/Cast/Indirect are serialized but rejected until implemented; simple scalar raw-pointer deref/load/store and scalar field projection are supported |
 | Type Layout | monomorphized rustc `LayoutData` recipes for local and extern signature types, including size/alignment, fields, variants, niches, and scalar valid ranges |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar/raw-pointer/void function calls and direct scalar/raw-pointer/void `extern "C"` calls with unreachable unwind |
-| MIR rvalues | `Use`, scalar raw-pointer load/store, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |
+| MIR rvalues | `Use`, scalar raw-pointer load/store including simple field offsets, scalar tuple/struct `Aggregate`, local scalar aggregate copy/move, no-op empty struct local construction, integer arithmetic/bitwise/div/rem/shift `BinaryOp`, checked add/sub/mul `(value, overflow)` tuple lowering through 64-bit integers, integer and pointer `Eq`/`Ne`, integer `UnaryOp` negation/bit-not, integer `IntToInt` casts, thin `PtrToPtr` copies |
 | Values | integer/bool/raw-pointer locals, integer/bool constants, and null pointer constants, including `isize`/`usize` lowered through the active target pointer width |
 | SCI format | SA text generated from canonical plan |
 | Proof mode | `rust-trusted` |

@@ -17,6 +17,13 @@ extern const int32_t *sci_null_ptr(void);
 extern int32_t sci_load_i32(const int32_t *value);
 extern void sci_store_i32(int32_t *slot, int32_t value);
 extern int32_t sci_replace_i32(int32_t *slot, int32_t value);
+struct FfiPair {
+    int32_t left;
+    int32_t right;
+};
+extern int32_t sci_load_pair_right(const struct FfiPair *pair);
+extern void sci_store_pair_left(struct FfiPair *pair, int32_t value);
+extern int32_t sci_replace_pair_right(struct FfiPair *pair, int32_t value);
 extern int32_t sci_call_add_i32(int32_t a, int32_t b);
 extern int32_t sci_call_host_add_i32(int32_t a, int32_t b);
 extern void sci_unit_noop(int32_t a);
@@ -55,6 +62,7 @@ const int32_t *sci_host_identity_ptr(const int32_t *value) {
 int main(void) {
     static const int32_t ptr_probe = 42;
     int32_t mutable_probe = 11;
+    struct FfiPair pair_probe = { .left = 5, .right = 42 };
 
     if (sci_add_i32(20, 22) != 42) {
         return 1;
@@ -122,6 +130,19 @@ int main(void) {
     }
     if (mutable_probe != 77) {
         return 48;
+    }
+    if (sci_load_pair_right(&pair_probe) != 42) {
+        return 49;
+    }
+    sci_store_pair_left(&pair_probe, 42);
+    if (pair_probe.left != 42) {
+        return 50;
+    }
+    if (sci_replace_pair_right(&pair_probe, 77) != 42) {
+        return 51;
+    }
+    if (pair_probe.right != 77) {
+        return 52;
     }
     if (sci_call_add_i32(11, 31) != 42) {
         return 6;

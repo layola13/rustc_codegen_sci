@@ -1005,13 +1005,13 @@ fn lower_assignment<'tcx>(
         );
     }
 
-    if let Some(ptr) = lower_deref_place_as_ptr(place)? {
+    if let Some(memory) = lower_memory_place(tcx, instance, mir, place)? {
         let (ty, _size, align) = scalar_memory_layout(tcx, instance, place_ty)?;
         let temp = state.allocate_temp(ty);
         let mut operations = vec![lower_rvalue(tcx, instance, mir, state, temp, rvalue)?];
         operations.push(Operation::Store {
-            ptr,
-            offset: 0,
+            ptr: memory.ptr,
+            offset: memory.offset,
             value: ValueRef::Local(temp),
             ty,
             align,
@@ -1196,13 +1196,13 @@ fn lower_rvalue<'tcx>(
 ) -> Result<Operation, String> {
     match rvalue {
         Rvalue::Use(Operand::Copy(place) | Operand::Move(place), _) => {
-            if let Some(ptr) = lower_deref_place_as_ptr(*place)? {
+            if let Some(memory) = lower_memory_place(tcx, instance, mir, *place)? {
                 let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
                 let (ty, _size, align) = scalar_memory_layout(tcx, instance, place_ty)?;
                 return Ok(Operation::Load {
                     dst,
-                    ptr,
-                    offset: 0,
+                    ptr: memory.ptr,
+                    offset: memory.offset,
                     ty,
                     align,
                 });
@@ -2131,20 +2131,69 @@ fn lower_place_as_value(state: &LoweringState, place: Place<'_>) -> Result<Value
     ))
 }
 
-fn lower_deref_place_as_ptr(place: Place<'_>) -> Result<Option<ValueRef>, String> {
-    if place.projection.len() == 1 && matches!(place.projection[0], ProjectionElem::Deref) {
-        return Ok(Some(ValueRef::Local(local_id(place.local))));
+struct MemoryPlace {
+    ptr: ValueRef,
+    offset: u64,
+}
+
+fn lower_memory_place<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+    place: Place<'tcx>,
+) -> Result<Option<MemoryPlace>, String> {
+    let Some((ProjectionElem::Deref, rest)) = place.projection.split_first() else {
+        return Ok(None);
+    };
+
+    let mut current_ty = monomorphize_ty(tcx, instance, mir.local_decls[place.local].ty);
+    current_ty = match current_ty.kind() {
+        ty::RawPtr(pointee, _) | ty::Ref(_, pointee, _) => *pointee,
+        _ => {
+            return Err(format!(
+                "{}: deref base has unsupported type `{}`",
+                tcx.symbol_name(instance).name,
+                current_ty
+            ));
+        }
+    };
+
+    let mut offset = 0_u64;
+    for projection in rest {
+        match projection {
+            ProjectionElem::Field(field, field_ty) => {
+                let layout = tcx
+                    .layout_of(ty::TypingEnv::fully_monomorphized().as_query_input(current_ty))
+                    .map_err(|err| {
+                        format!(
+                            "{}: failed to compute field layout for `{}`: {err:?}",
+                            tcx.symbol_name(instance).name,
+                            current_ty
+                        )
+                    })?;
+                offset = offset
+                    .checked_add(layout.fields.offset(field.as_usize()).bytes())
+                    .ok_or_else(|| {
+                        format!(
+                            "{}: memory field offset overflow for `{place:?}`",
+                            tcx.symbol_name(instance).name
+                        )
+                    })?;
+                current_ty = monomorphize_ty(tcx, instance, *field_ty);
+            }
+            other => {
+                return Err(format!(
+                    "{}: unsupported deref projection `{other:?}` in `{place:?}`",
+                    tcx.symbol_name(instance).name
+                ));
+            }
+        }
     }
-    if place
-        .projection
-        .iter()
-        .any(|projection| matches!(projection, ProjectionElem::Deref))
-    {
-        return Err(format!(
-            "rustc_codegen_sci does not yet support deref place with additional projections `{place:?}`"
-        ));
-    }
-    Ok(None)
+
+    Ok(Some(MemoryPlace {
+        ptr: ValueRef::Local(local_id(place.local)),
+        offset,
+    }))
 }
 
 fn scalar_memory_layout<'tcx>(

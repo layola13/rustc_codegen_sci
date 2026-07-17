@@ -29,6 +29,8 @@ Baseline: 2026-07-16.
 - [x] Wire-level worker diagnostic codes and coarse function/block/local
   diagnostic locations.
 - [x] `PLAN_VERSION = 10` scalar raw-pointer `Load`/`Store` memory operations.
+- [x] Scalar raw-pointer field-offset load/store for simple `repr(C)` aggregate
+  pointees.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI
@@ -48,6 +50,7 @@ Baseline: 2026-07-16.
 
 - [x] Add scalar raw-pointer load/store and target-qualified memory operation
   plans.
+- [x] Add raw-pointer scalar field load/store using rustc field layout offsets.
 - [ ] Add stack allocations with size/alignment validation.
 - [ ] Add indirect calls with explicit function signatures.
 - [ ] Add aggregate argument/return ABI, including sret/byval.

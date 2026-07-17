@@ -28,8 +28,10 @@ Baseline: 2026-07-16.
 - `544be0e`: auditable 33-case Direct scalar ABI suite with signed and unsigned
   narrow-integer boundary values.
 - `302c770`: RPC v2 worker diagnostic codes and coarse diagnostic locations.
-- Current worktree: `PLAN_VERSION = 10` scalar raw-pointer load/store memory
+- `f8958ae`: `PLAN_VERSION = 10` scalar raw-pointer load/store memory
   operations.
+- Current worktree: scalar raw-pointer field-offset load/store for simple
+  aggregate pointees.
 
 ## Current Increment
 
@@ -71,13 +73,18 @@ Baseline: 2026-07-16.
   emission.
 - Extended the smoke harness with C-provided `i32` pointer load, store, and
   replace cases that compile through `rustc_codegen_sci`, link, and execute.
+- Extended memory place lowering to accumulate rustc field layout offsets after
+  a raw-pointer dereference, enabling `(*p).field` scalar loads/stores.
+- Added linked C/Rust smoke coverage for reading and writing the second field of
+  a `repr(C)` two-`i32` aggregate through a raw pointer.
 
 ## Current Boundary
 
 The backend supports direct pointer values, serializes rustc ABI evidence,
 serializes the current x86_64 Linux target descriptor/DataLayout, and carries
 monomorphized type layout recipes. It now supports simple scalar raw-pointer
-load/store dereferences, but not projected/aggregate dereferences,
+load/store dereferences and scalar field projections after raw-pointer
+dereference, but not array/index projections, whole-aggregate memory copies,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
 or non-Direct ABI lowering.
 Worker tests now cover the current serialized ABI and layout validation
