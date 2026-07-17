@@ -21,8 +21,10 @@ Baseline: 2026-07-16.
 - `cb534fe`: `PLAN_VERSION = 9` `TypeLayoutRecipe` wire schema and backend
   lowering for size/alignment, scalar valid ranges, fields, variants, and
   niches.
-- Current worktree: worker-level ABI/type-layout fixture matrix for the current
+- `9e31b38`: worker-level ABI/type-layout fixture matrix for the current
   validation boundary, plus ABI value size/alignment validation.
+- Current worktree: linked Direct scalar ABI smoke fixture matrix covering
+  C-to-SCI exported functions and SCI-to-C extern calls.
 
 ## Current Increment
 
@@ -42,6 +44,12 @@ Baseline: 2026-07-16.
   struct, union, array, empty, and niche enum type layouts.
 - ABI value validation now checks every serialized ABI size/alignment pair before
   mode-specific checks.
+- Added `abi_direct` smoke fixtures that compile through `rustc_codegen_sci`,
+  link against a C harness, and execute Direct ABI checks for signed/unsigned
+  8/16/32/64-bit integers, pointer identity, `isize`/`usize`, void returns, and
+  host extern calls in the reverse direction.
+- Extended `tests/smoke.sh` so each fixture is compiled, linked, and executed
+  through the same backend/worker path.
 
 ## Current Boundary
 
@@ -51,6 +59,8 @@ monomorphized type layout recipes, but not dereference, load/store,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
 or non-Direct ABI lowering.
 Worker tests now cover the current serialized ABI and layout validation
-boundary, but the real bidirectional C/LLVM ABI fixture suite is still pending.
+boundary, and the smoke suite now has initial linked Direct scalar ABI coverage.
+The broader 20-30 case bidirectional C/LLVM ABI suite and non-Direct ABI cases
+are still pending.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.

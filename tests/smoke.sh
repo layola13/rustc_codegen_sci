@@ -14,16 +14,24 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 
 export SCI_CODEGEN_WORKER="$WORKER"
-"$RUSTC" \
-    --sysroot "$SCI_RUST_SYSROOT" \
-    -Zcodegen-backend="$BACKEND" \
-    --crate-type=lib \
-    --edition=2024 \
-    -Cpanic=abort \
-    -Coverflow-checks=on \
-    -Ccodegen-units=1 \
-    --emit=obj="$OUT/add.o" \
-    "$ROOT/tests/fixtures/add.rs"
 
-cc -no-pie "$ROOT/tests/fixtures/add_harness.c" "$OUT/add.o" -o "$OUT/add-smoke"
-"$OUT/add-smoke"
+compile_fixture() {
+    local name="$1"
+
+    "$RUSTC" \
+        --sysroot "$SCI_RUST_SYSROOT" \
+        -Zcodegen-backend="$BACKEND" \
+        --crate-type=lib \
+        --edition=2024 \
+        -Cpanic=abort \
+        -Coverflow-checks=on \
+        -Ccodegen-units=1 \
+        --emit=obj="$OUT/$name.o" \
+        "$ROOT/tests/fixtures/$name.rs"
+
+    cc -no-pie "$ROOT/tests/fixtures/${name}_harness.c" "$OUT/$name.o" -o "$OUT/$name-smoke"
+    "$OUT/$name-smoke"
+}
+
+compile_fixture add
+compile_fixture abi_direct

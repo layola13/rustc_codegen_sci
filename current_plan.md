@@ -16,8 +16,8 @@ No LLVM backend fallback and no `bc2sa` fallback.
 
 1. Build 20-30 bidirectional C/LLVM ABI fixtures over the serialized rustc
    `FnAbiPlan` and `TypeLayoutRecipe`; the worker-level ABI/layout fixture
-   matrix now covers the current validation boundary, but real linked fixtures
-   are still pending.
+   matrix covers the current validation boundary, and the linked smoke suite now
+   has initial Direct scalar C-to-SCI and SCI-to-C coverage.
 2. Implement the first Pair/Cast/Indirect C ABI fixtures and aggregate return/arg
    lowering against rustc `FnAbi` evidence.
 3. Add target-qualified stack/load/store plans with size and alignment, then

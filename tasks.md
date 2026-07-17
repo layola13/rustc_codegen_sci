@@ -22,6 +22,8 @@ Baseline: 2026-07-16.
   emission.
 - [x] Worker-level ABI/type-layout fixture matrix for the current serialized
   validation boundary.
+- [x] Linked Direct scalar ABI smoke fixture matrix covering C-to-SCI exports and
+  SCI-to-C extern calls.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI
@@ -30,6 +32,7 @@ Baseline: 2026-07-16.
 - [x] Add `TypeLayoutRecipe` with size, alignment, fields, variants, and niches.
 - [x] Add `FnAbiPlan` with Ignore, Direct, Pair, Cast, and Indirect pass modes.
 - [x] Add worker-level negative tests for unsupported non-Direct ABI modes.
+- [x] Add initial linked bidirectional Direct scalar ABI fixtures.
 - [ ] Implement Pair/Cast/Indirect ABI lowering and object emission.
 - [ ] Build 20-30 bidirectional C/LLVM ABI fixtures.
 - [ ] Add structured diagnostic codes and rustc span/MIR locations.
