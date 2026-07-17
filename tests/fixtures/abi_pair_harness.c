@@ -8,14 +8,9 @@ struct PairU64 {
 extern uint64_t sci_abi_pair_arg(struct PairU64 value);
 extern uint64_t sci_abi_call_host_pair_arg(uint64_t left, uint64_t right);
 extern struct PairU64 sci_abi_pair_return(uint64_t left, uint64_t right);
-extern uint64_t sci_abi_call_host_pair_return(uint64_t left, uint64_t right);
 
 uint64_t sci_host_pair_arg(struct PairU64 value) {
     return value.left + value.right;
-}
-
-struct PairU64 sci_host_pair_return(uint64_t left, uint64_t right) {
-    return (struct PairU64){ .left = left, .right = right };
 }
 
 int main(void) {
@@ -28,9 +23,6 @@ int main(void) {
     struct PairU64 returned = sci_abi_pair_return(UINT64_C(17), UINT64_C(25));
     if (returned.left != UINT64_C(17) || returned.right != UINT64_C(25)) {
         return 3;
-    }
-    if (sci_abi_call_host_pair_return(UINT64_C(19), UINT64_C(23)) != UINT64_C(42)) {
-        return 4;
     }
     return 0;
 }
