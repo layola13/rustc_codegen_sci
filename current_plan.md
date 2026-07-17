@@ -21,9 +21,9 @@ No LLVM backend fallback and no `bc2sa` fallback.
    scalar C-to-SCI and SCI-to-C cases.
 2. Extend the first Cast ABI return lowering into broader Pair/Cast/Indirect C
    ABI fixtures and aggregate return/arg lowering against rustc `FnAbi`
-   evidence; current smoke coverage supports single-field `u8`/`u16`/`u32`/`u64`
-   Cast C ABI returns and rejects Indirect C ABI plus Pair Rust ABI returns
-   before MIR lowering.
+   evidence; current smoke coverage supports single-field signed and unsigned
+   8/16/32/64-bit Cast C ABI returns and rejects Indirect C ABI plus Pair Rust
+   ABI returns before MIR lowering.
 3. Extend structured diagnostics from worker RPC codes/coarse locations and
    backend fatal codes plus MIR block/statement contexts/source spans to
    protocol-level backend diagnostic payloads.

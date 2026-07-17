@@ -360,7 +360,7 @@ fn lower_function<'tcx>(
             if local == rustc_middle::mir::RETURN_PLACE {
                 if !is_supported_cast_return_abi(&fn_abi.return_value)
                     || field_types.len() != 1
-                    || field_types[0] != cast_abi_scalar_type(&fn_abi.return_value)
+                    || scalar_type_size_bytes(field_types[0]) != Some(fn_abi.return_value.size)
                 {
                     return Err(BackendDiagnostic::new(format!(
                         "{}: aggregate return ABI is not yet supported",
@@ -534,16 +534,6 @@ fn is_supported_cast_return_abi(value: &AbiValuePlan) -> bool {
         && rest.total_bytes == value.size
         && matches!(value.size, 1 | 2 | 4 | 8)
         && value.align <= 8
-}
-
-fn cast_abi_scalar_type(value: &AbiValuePlan) -> ScalarType {
-    match value.size {
-        1 => ScalarType::U8,
-        2 => ScalarType::U16,
-        4 => ScalarType::U32,
-        8 => ScalarType::U64,
-        _ => unreachable!("unsupported cast ABI size must be checked first"),
-    }
 }
 
 fn unsupported_backend_pass_mode(mode: &AbiPassModePlan) -> Option<&'static str> {
@@ -2636,6 +2626,16 @@ fn scalar_bit_width(ty: Ty<'_>) -> Option<u32> {
         ty::Int(ty::IntTy::I64 | ty::IntTy::Isize)
         | ty::Uint(ty::UintTy::U64 | ty::UintTy::Usize) => Some(64),
         _ => None,
+    }
+}
+
+fn scalar_type_size_bytes(ty: ScalarType) -> Option<u64> {
+    match ty {
+        ScalarType::I8 | ScalarType::U8 => Some(1),
+        ScalarType::I16 | ScalarType::U16 => Some(2),
+        ScalarType::I32 | ScalarType::U32 => Some(4),
+        ScalarType::I64 | ScalarType::U64 => Some(8),
+        ScalarType::I1 | ScalarType::Ptr => None,
     }
 }
 
