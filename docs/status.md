@@ -34,6 +34,8 @@ Baseline date: 2026-07-16.
 - Worker RPC responses and backend fatal diagnostics share a protocol-level
   `DiagnosticPayload` carrying stable code, message, and optional
   function/block/local location.
+- Scalar stack allocations with size/alignment validation lower through
+  canonical `stack_alloc` slots for address-taken scalar locals.
 - Worker-side target descriptor, type layout recipe, and plan validation.
 - SA text emitter from the canonical plan.
 - SCI `build-obj` process boundary.

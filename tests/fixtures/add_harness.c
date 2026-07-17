@@ -8,6 +8,7 @@ extern int32_t sci_tuple_copy_sum_i32(int32_t a, int32_t b);
 extern int32_t sci_struct_sum_i32(int32_t a, int32_t b);
 extern int32_t sci_struct_copy_sum_i32(int32_t a, int32_t b);
 extern int32_t sci_empty_struct_local_i32(int32_t a, int32_t b);
+extern int32_t sci_stack_slot_i32(int32_t value);
 extern const int32_t *sci_identity_ptr(const int32_t *value);
 extern const int32_t *sci_call_identity_ptr(const int32_t *value);
 extern const int32_t *sci_call_host_identity_ptr(const int32_t *value);
@@ -99,6 +100,9 @@ int main(void) {
     }
     if (sci_empty_struct_local_i32(15, 27) != 42) {
         return 36;
+    }
+    if (sci_stack_slot_i32(11) != 42) {
+        return 57;
     }
     if (sci_identity_ptr(&ptr_probe) != &ptr_probe) {
         return 37;

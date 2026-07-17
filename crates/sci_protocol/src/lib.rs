@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 
 pub const RPC_MAGIC: [u8; 8] = *b"SCIRPC\0\0";
 pub const RPC_VERSION: u16 = 3;
-pub const PLAN_VERSION: u16 = 10;
+pub const PLAN_VERSION: u16 = 11;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -164,6 +164,11 @@ pub enum Operation {
         op: CastOp,
         src: ValueRef,
         ty: ScalarType,
+    },
+    StackAlloc {
+        dst: u32,
+        size: u64,
+        align: u64,
     },
     Load {
         dst: u32,
@@ -775,6 +780,12 @@ impl WireEncode for Operation {
                 src.encode(encoder)?;
                 ty.encode(encoder)?;
             }
+            Self::StackAlloc { dst, size, align } => {
+                encoder.u8(7);
+                encoder.u32(*dst);
+                encoder.u64(*size);
+                encoder.u64(*align);
+            }
             Self::Load {
                 dst,
                 ptr,
@@ -890,6 +901,11 @@ impl WireDecode for Operation {
                 offset: decoder.u64()?,
                 value: ValueRef::decode(decoder)?,
                 ty: ScalarType::decode(decoder)?,
+                align: decoder.u64()?,
+            }),
+            7 => Ok(Self::StackAlloc {
+                dst: decoder.u32()?,
+                size: decoder.u64()?,
                 align: decoder.u64()?,
             }),
             tag => Err(ProtocolError::InvalidTag("operation", tag)),
@@ -1979,6 +1995,50 @@ mod tests {
                                 ty: ScalarType::I32,
                                 align: 4,
                             }],
+                            terminator: TerminatorPlan::Return,
+                        }],
+                    },
+                    FunctionPlan {
+                        symbol: "stack_i32".into(),
+                        abi: direct_abi(Vec::new(), Some((4, 4))),
+                        argument_locals: Vec::new(),
+                        return_local: Some(0),
+                        locals: vec![
+                            LocalPlan {
+                                id: 0,
+                                ty: ScalarType::I32,
+                            },
+                            LocalPlan {
+                                id: 1,
+                                ty: ScalarType::Ptr,
+                            },
+                        ],
+                        blocks: vec![BasicBlockPlan {
+                            id: 0,
+                            operations: vec![
+                                Operation::StackAlloc {
+                                    dst: 1,
+                                    size: 4,
+                                    align: 4,
+                                },
+                                Operation::Store {
+                                    ptr: ValueRef::Local(1),
+                                    offset: 0,
+                                    value: ValueRef::Integer {
+                                        ty: ScalarType::I32,
+                                        bits: 42,
+                                    },
+                                    ty: ScalarType::I32,
+                                    align: 4,
+                                },
+                                Operation::Load {
+                                    dst: 0,
+                                    ptr: ValueRef::Local(1),
+                                    offset: 0,
+                                    ty: ScalarType::I32,
+                                    align: 4,
+                                },
+                            ],
                             terminator: TerminatorPlan::Return,
                         }],
                     },

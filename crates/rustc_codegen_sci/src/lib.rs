@@ -333,6 +333,7 @@ fn lower_function<'tcx>(
     let fn_abi = lower_fn_abi_plan(tcx, instance)?;
     validate_backend_fn_abi_boundary(tcx, instance, &fn_abi)?;
 
+    let stack_slot_recipes = stack_slot_recipes(tcx, instance, mir)?;
     let mut state = LoweringState::new(mir.local_decls.len());
     let mut locals = Vec::with_capacity(mir.local_decls.len());
     for (local, decl) in mir.local_decls.iter_enumerated() {
@@ -343,6 +344,9 @@ fn lower_function<'tcx>(
                 id: local_id(local),
                 ty,
             });
+            if let Some(recipe) = stack_slot_recipes.get(&local_id(local)) {
+                state.allocate_stack_slot(local, recipe.size, recipe.align, recipe.ty);
+            }
         } else if is_unit_ty(ty) {
             if local.index() != 0 && local.index() <= mir.arg_count {
                 return Err(BackendDiagnostic::new(format!(
@@ -480,6 +484,18 @@ fn lower_function<'tcx>(
     let mut blocks = Vec::with_capacity(mir.basic_blocks.len());
     for (block_id, block) in mir.basic_blocks.iter_enumerated() {
         let mut operations = Vec::new();
+        if block_id.index() == 0 {
+            operations.extend(
+                state
+                    .stack_slots
+                    .values()
+                    .map(|slot| Operation::StackAlloc {
+                        dst: slot.ptr,
+                        size: slot.size,
+                        align: slot.align,
+                    }),
+            );
+        }
         for (statement_index, statement) in block.statements.iter().enumerate() {
             match &statement.kind {
                 StatementKind::Assign(assign) => {
@@ -617,6 +633,48 @@ fn unsupported_backend_pass_mode(mode: &AbiPassModePlan) -> Option<&'static str>
     }
 }
 
+fn stack_slot_recipes<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+    mir: &Body<'tcx>,
+) -> Result<BTreeMap<u32, StackSlotRecipe>, String> {
+    let mut slots = BTreeMap::new();
+    for block in mir.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (_, rvalue) = &**assign;
+            let place = match rvalue {
+                Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) => *place,
+                _ => continue,
+            };
+            if !is_supported_stack_slot_place(mir, place) {
+                continue;
+            }
+            let ty = monomorphize_ty(tcx, instance, mir.local_decls[place.local].ty);
+            let Ok((scalar_ty, size, align)) = scalar_memory_layout(tcx, instance, ty) else {
+                continue;
+            };
+            slots.insert(
+                local_id(place.local),
+                StackSlotRecipe {
+                    size,
+                    align,
+                    ty: scalar_ty,
+                },
+            );
+        }
+    }
+    Ok(slots)
+}
+
+fn is_supported_stack_slot_place(mir: &Body<'_>, place: Place<'_>) -> bool {
+    place.projection.is_empty()
+        && place.local != rustc_middle::mir::RETURN_PLACE
+        && place.local.index() > mir.arg_count
+}
+
 fn annotate_mir_statement_error<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
@@ -670,7 +728,23 @@ fn annotate_mir_error<'tcx>(
 struct LoweringState {
     next_synthetic_local: u32,
     tuple_fields: BTreeMap<(u32, usize), u32>,
+    stack_slots: BTreeMap<u32, StackSlot>,
     synthetic_locals: Vec<LocalPlan>,
+}
+
+#[derive(Clone, Copy)]
+struct StackSlot {
+    ptr: u32,
+    size: u64,
+    align: u64,
+    ty: ScalarType,
+}
+
+#[derive(Clone, Copy)]
+struct StackSlotRecipe {
+    size: u64,
+    align: u64,
+    ty: ScalarType,
 }
 
 impl LoweringState {
@@ -679,6 +753,7 @@ impl LoweringState {
             next_synthetic_local: u32::try_from(mir_local_count)
                 .expect("MIR local count exceeds u32"),
             tuple_fields: BTreeMap::new(),
+            stack_slots: BTreeMap::new(),
             synthetic_locals: Vec::new(),
         }
     }
@@ -695,6 +770,32 @@ impl LoweringState {
 
     fn tuple_field(&self, local: Local, field: usize) -> Option<u32> {
         self.tuple_fields.get(&(local_id(local), field)).copied()
+    }
+
+    fn allocate_stack_slot(&mut self, local: Local, size: u64, align: u64, ty: ScalarType) -> u32 {
+        let key = local_id(local);
+        if let Some(slot) = self.stack_slots.get(&key) {
+            return slot.ptr;
+        }
+        let ptr = self.allocate_synthetic();
+        self.stack_slots.insert(
+            key,
+            StackSlot {
+                ptr,
+                size,
+                align,
+                ty,
+            },
+        );
+        self.synthetic_locals.push(LocalPlan {
+            id: ptr,
+            ty: ScalarType::Ptr,
+        });
+        ptr
+    }
+
+    fn stack_slot(&self, local: Local) -> Option<StackSlot> {
+        self.stack_slots.get(&local_id(local)).copied()
     }
 
     fn allocate_temp(&mut self, ty: ScalarType) -> u32 {
@@ -1305,6 +1406,19 @@ fn lower_assignment<'tcx>(
         );
     }
 
+    if let Some(slot) = stack_slot_for_place(state, place) {
+        let dst = lower_destination(state, place)?;
+        let mut operations = vec![lower_rvalue(tcx, instance, mir, state, dst, rvalue)?];
+        operations.push(Operation::Store {
+            ptr: ValueRef::Local(slot.ptr),
+            offset: 0,
+            value: ValueRef::Local(dst),
+            ty: slot.ty,
+            align: slot.align,
+        });
+        return Ok(operations);
+    }
+
     if let Some(memory) = lower_memory_place(tcx, instance, mir, place)? {
         let (ty, _size, align) = scalar_memory_layout(tcx, instance, place_ty)?;
         let temp = state.allocate_temp(ty);
@@ -1496,6 +1610,15 @@ fn lower_rvalue<'tcx>(
 ) -> Result<Operation, String> {
     match rvalue {
         Rvalue::Use(Operand::Copy(place) | Operand::Move(place), _) => {
+            if let Some(slot) = stack_slot_for_place(state, *place) {
+                return Ok(Operation::Load {
+                    dst,
+                    ptr: ValueRef::Local(slot.ptr),
+                    offset: 0,
+                    ty: slot.ty,
+                    align: slot.align,
+                });
+            }
             if let Some(memory) = lower_memory_place(tcx, instance, mir, *place)? {
                 let place_ty = monomorphize_ty(tcx, instance, place.ty(&mir.local_decls, tcx).ty);
                 let (ty, _size, align) = scalar_memory_layout(tcx, instance, place_ty)?;
@@ -1571,6 +1694,18 @@ fn lower_rvalue<'tcx>(
                 op: lower_int_cast(tcx, instance, src_ty, dst_ty)?,
                 src: lower_operand(tcx, instance, mir, state, operand)?,
                 ty: dst_scalar,
+            })
+        }
+        Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) => {
+            let slot = stack_slot_for_place(state, *place).ok_or_else(|| {
+                format!(
+                    "{}: taking the address of `{place:?}` is not yet supported",
+                    tcx.symbol_name(instance).name
+                )
+            })?;
+            Ok(Operation::Copy {
+                dst,
+                src: ValueRef::Local(slot.ptr),
             })
         }
         other => Err(format!(
@@ -2436,6 +2571,14 @@ fn lower_destination(state: &LoweringState, place: Place<'_>) -> Result<u32, Str
     }
 }
 
+fn stack_slot_for_place(state: &LoweringState, place: Place<'_>) -> Option<StackSlot> {
+    place
+        .projection
+        .is_empty()
+        .then(|| state.stack_slot(place.local))
+        .flatten()
+}
+
 fn lower_call_destination<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
@@ -2936,6 +3079,7 @@ fn classify_backend_diagnostic_code(diagnostic: &str) -> &'static str {
         || diagnostic.contains("unsupported cast kind")
         || diagnostic.contains("unsupported deref projection")
         || diagnostic.contains("projected place")
+        || diagnostic.contains("taking the address")
         || diagnostic.contains("dynamic memory index")
     {
         "SCI_BACKEND_MIR_UNSUPPORTED"

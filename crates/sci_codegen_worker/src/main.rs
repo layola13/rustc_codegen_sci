@@ -86,7 +86,10 @@ fn classify_diagnostic_code(diagnostic: &str) -> &'static str {
         || diagnostic.contains("code model")
     {
         "SCI_TARGET_UNSUPPORTED"
-    } else if diagnostic.contains(" load ") || diagnostic.contains(" store ") {
+    } else if diagnostic.contains(" load ")
+        || diagnostic.contains(" store ")
+        || diagnostic.contains(" stack_alloc ")
+    {
         "SCI_MEMORY_INVALID"
     } else if diagnostic.contains("type layout")
         || diagnostic.contains("field")
@@ -778,6 +781,24 @@ fn validate_operation(
     operation: &Operation,
 ) -> Result<(), String> {
     match operation {
+        Operation::StackAlloc { dst, size, align } => {
+            validate_destination(locals, *dst)?;
+            validate_memory_size(function, "stack_alloc", *size)?;
+            validate_memory_align(function, "stack_alloc", *align)?;
+            if *align > *size {
+                return Err(format!(
+                    "{} stack_alloc alignment {align} exceeds size {size}",
+                    function.symbol
+                ));
+            }
+            if locals[dst] != ScalarType::Ptr {
+                return Err(format!(
+                    "{} stack_alloc destination must be ptr",
+                    function.symbol
+                ));
+            }
+            defined.insert(*dst);
+        }
         Operation::Copy { dst, src } => {
             validate_value(locals, defined, src)?;
             validate_destination(locals, *dst)?;
@@ -904,6 +925,13 @@ fn validate_memory_align(function: &FunctionPlan, op: &str, align: u64) -> Resul
             "{} {op} has invalid alignment {align}",
             function.symbol
         ));
+    }
+    Ok(())
+}
+
+fn validate_memory_size(function: &FunctionPlan, op: &str, size: u64) -> Result<(), String> {
+    if size == 0 {
+        return Err(format!("{} {op} has invalid size 0", function.symbol));
     }
     Ok(())
 }
@@ -1111,6 +1139,7 @@ fn operation_destination(operation: &Operation) -> Option<u32> {
         | Operation::Binary { dst, .. }
         | Operation::Compare { dst, .. }
         | Operation::Cast { dst, .. }
+        | Operation::StackAlloc { dst, .. }
         | Operation::Load { dst, .. } => Some(*dst),
         Operation::Store { .. } => None,
     }
@@ -1209,6 +1238,15 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
         .iter()
         .map(|local| (local.id, local.ty))
         .collect();
+    let stack_allocs: BTreeSet<u32> = function
+        .blocks
+        .iter()
+        .flat_map(|block| block.operations.iter())
+        .filter_map(|operation| match operation {
+            Operation::StackAlloc { dst, .. } => Some(*dst),
+            _ => None,
+        })
+        .collect();
     out.push_str("@export ");
     out.push_str(&function.symbol);
     out.push('(');
@@ -1246,13 +1284,31 @@ fn emit_function(out: &mut String, function: &FunctionPlan) -> Result<(), String
                 defined.insert(dst);
             }
         }
-        emit_terminator(out, function, block.id, &defined, &block.terminator);
+        emit_terminator(
+            out,
+            function,
+            block.id,
+            &defined,
+            &stack_allocs,
+            &block.terminator,
+        );
     }
     Ok(())
 }
 
 fn emit_operation(out: &mut String, locals: &BTreeMap<u32, ScalarType>, operation: &Operation) {
     match operation {
+        Operation::StackAlloc {
+            dst,
+            size,
+            align: _,
+        } => {
+            out.push_str("    ");
+            out.push_str(&local_name(*dst));
+            out.push_str(" = stack_alloc ");
+            out.push_str(&size.to_string());
+            out.push('\n');
+        }
         Operation::Copy { dst, src } => {
             out.push_str("    ");
             out.push_str(&local_name(*dst));
@@ -1347,6 +1403,7 @@ fn emit_terminator(
     function: &FunctionPlan,
     block_id: u32,
     defined: &BTreeSet<u32>,
+    stack_allocs: &BTreeSet<u32>,
     terminator: &TerminatorPlan,
 ) {
     match terminator {
@@ -1354,6 +1411,9 @@ fn emit_terminator(
             let mut releasable = defined.clone();
             if let Some(return_local) = function.return_local {
                 releasable.remove(&return_local);
+            }
+            for stack_alloc in stack_allocs {
+                releasable.remove(stack_alloc);
             }
             for local in releasable.into_iter().rev() {
                 out.push_str("    !");
@@ -1833,6 +1893,10 @@ mod tests {
                     id: 2,
                     ty: ScalarType::I32,
                 },
+                LocalPlan {
+                    id: 3,
+                    ty: ScalarType::Ptr,
+                },
             ],
             blocks: vec![BasicBlockPlan {
                 id: 0,
@@ -1883,6 +1947,52 @@ mod tests {
         assert!(
             err.contains("invalid alignment"),
             "expected alignment diagnostic, got `{err}`"
+        );
+    }
+
+    #[test]
+    fn stack_alloc_memory_operation_is_accepted() {
+        let function = memory_function(vec![
+            Operation::StackAlloc {
+                dst: 3,
+                size: 4,
+                align: 4,
+            },
+            Operation::Store {
+                ptr: ValueRef::Local(3),
+                offset: 0,
+                value: ValueRef::Integer {
+                    ty: ScalarType::I32,
+                    bits: 42,
+                },
+                ty: ScalarType::I32,
+                align: 4,
+            },
+            Operation::Load {
+                dst: 0,
+                ptr: ValueRef::Local(3),
+                offset: 0,
+                ty: ScalarType::I32,
+                align: 4,
+            },
+        ]);
+
+        validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
+            .expect("stack_alloc memory function should validate");
+    }
+
+    #[test]
+    fn malformed_stack_alloc_is_rejected() {
+        let function = memory_function(vec![Operation::StackAlloc {
+            dst: 3,
+            size: 4,
+            align: 8,
+        }]);
+        let err = validate_function(&function, &BTreeMap::new(), &BTreeMap::new())
+            .expect_err("malformed stack_alloc should be rejected");
+        assert!(
+            err.contains("alignment 8 exceeds size 4"),
+            "expected stack_alloc alignment diagnostic, got `{err}`"
         );
     }
 

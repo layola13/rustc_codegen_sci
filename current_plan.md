@@ -24,14 +24,14 @@ No LLVM backend fallback and no `bc2sa` fallback.
    evidence; current smoke coverage supports bidirectional single-field signed
    and unsigned 8/16/32/64-bit Cast C ABI arguments/returns and rejects Indirect
    C ABI plus Pair Rust ABI returns before MIR lowering.
-3. Extend the new scalar raw-pointer load/store path to stack allocations,
-   dynamic array/slice projections, and whole-aggregate memory representation.
-4. Add allocation images and relocations for statics, strings, and panic data.
-5. Add direct SAB no-fallback emission from the same canonical plan.
+3. Add allocation images and relocations for statics, strings, and panic data.
+4. Add direct SAB no-fallback emission from the same canonical plan.
 
 Recently completed: structured worker and backend diagnostics now share a
 protocol-level `DiagnosticPayload` with stable codes and optional
-function/block/local locations.
+function/block/local locations; scalar stack allocations with size/alignment
+validation now lower through canonical `stack_alloc` slots for address-taken
+locals.
 
 ## Exit Gates
 

@@ -68,6 +68,14 @@ pub extern "C" fn sci_empty_struct_local_i32(a: i32, b: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sci_stack_slot_i32(value: i32) -> i32 {
+    let mut slot = value;
+    let slot_ref = &mut slot;
+    *slot_ref = 42;
+    slot
+}
+
+#[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn sci_identity_ptr(value: *const i32) -> *const i32 {
     value

@@ -41,7 +41,8 @@ Baseline: 2026-07-16.
   rustc source spans.
 - [x] Protocol-level `DiagnosticPayload` shared by worker RPC responses and
   backend fatal diagnostics, including stable code and optional location.
-- [x] `PLAN_VERSION = 10` scalar raw-pointer `Load`/`Store` memory operations.
+- [x] `PLAN_VERSION = 11` scalar raw-pointer `Load`/`Store` memory operations
+  plus stack allocations with size/alignment validation.
 - [x] Scalar raw-pointer field-offset load/store for simple `repr(C)` aggregate
   pointees.
 - [x] Scalar raw-pointer fixed array-index load/store using rustc array layout
@@ -66,6 +67,7 @@ Baseline: 2026-07-16.
 - [x] Add rustc source spans for backend MIR statement/terminator lowering
   diagnostics.
 - [x] Add protocol-level structured backend diagnostic payloads.
+- [x] Add stack allocations with size/alignment validation.
 - [ ] Implement Pair/Cast/Indirect ABI lowering and object emission.
 - [ ] Build 20-30 bidirectional C/LLVM ABI fixtures.
 
@@ -76,7 +78,6 @@ Baseline: 2026-07-16.
 - [x] Add raw-pointer scalar field load/store using rustc field layout offsets.
 - [x] Add raw-pointer scalar fixed array-index load/store using rustc array
   layout offsets.
-- [ ] Add stack allocations with size/alignment validation.
 - [ ] Add indirect calls with explicit function signatures.
 - [ ] Add aggregate argument/return ABI, including sret/byval.
 - [ ] Add direct SAB no-fallback emission from the canonical plan.

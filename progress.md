@@ -44,9 +44,12 @@ Baseline: 2026-07-16.
   modes before MIR lowering.
 - `9f821b6`: single-field signed and unsigned 8/16/32/64-bit Cast ABI
   arguments and returns lower through scalar registers.
-- Current increment: worker RPC responses and backend fatal diagnostics share a
-  protocol-level `DiagnosticPayload` with stable code and optional
-  function/block/local location.
+- `d76760b`: protocol-level `DiagnosticPayload` plus scalar stack allocations
+  with size/alignment validation and address-taken local lowering through
+  canonical stack slots.
+- Current increment: scalar stack allocations with size/alignment validation
+  lower through canonical slots, while worker/backend diagnostics keep the
+  shared protocol-level `DiagnosticPayload`.
 
 ## Current Increment
 
@@ -146,6 +149,12 @@ Baseline: 2026-07-16.
   rejections and function/block locations for MIR lowering failures.
 - Updated compile-fail smoke expectations so backend ABI and MIR diagnostics
   assert the structured location rendered from the payload.
+- Upgraded the canonical protocol to `PLAN_VERSION = 11` and introduced
+  `StackAlloc` operations for canonical stack slots, with backend lowering and
+  worker validation for size/alignment.
+- Added linked smoke coverage for stack-backed scalar locals that lower through
+  canonical stack slots and still round-trip through load/store on the same
+  local value.
 
 ## Current Boundary
 
@@ -169,6 +178,7 @@ Worker failures and backend-originated fatal diagnostics now share a
 protocol-level `DiagnosticPayload` carrying stable code plus optional
 function/block/local location. Backend-originated lowering failures also include
 MIR block and statement/terminator context plus rustc source spans for
-statement/terminator lowering failures.
+statement/terminator lowering failures. Stack-backed scalar locals now lower
+through canonical `stack_alloc` slots instead of needing a separate memory model.
 Aggregate ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof
 remain incomplete.
