@@ -574,9 +574,9 @@ fn validate_fn_abi(
         ));
     }
     for (index, argument) in abi.arguments.iter().enumerate() {
-        validate_abi_value(context, &format!("argument {index}"), argument, true, false)?;
+        validate_abi_value(context, &format!("argument {index}"), argument, true)?;
     }
-    validate_abi_value(context, "return", &abi.return_value, has_return_value, true)?;
+    validate_abi_value(context, "return", &abi.return_value, has_return_value)?;
     Ok(())
 }
 
@@ -585,7 +585,6 @@ fn validate_abi_value(
     label: &str,
     value: &sci_protocol::AbiValuePlan,
     is_lowered: bool,
-    is_return: bool,
 ) -> Result<(), String> {
     validate_size_align(
         &format!("{context} ABI {label} layout"),
@@ -601,11 +600,7 @@ fn validate_abi_value(
         AbiPassModePlan::Pair => Err(format!(
             "{context} ABI {label} uses unsupported Pair pass mode"
         )),
-        AbiPassModePlan::Cast { .. }
-            if is_return && is_lowered && is_supported_cast_abi_value(value) =>
-        {
-            Ok(())
-        }
+        AbiPassModePlan::Cast { .. } if is_lowered && is_supported_cast_abi_value(value) => Ok(()),
         AbiPassModePlan::Cast { .. } => Err(format!(
             "{context} ABI {label} uses unsupported Cast pass mode"
         )),
@@ -1945,10 +1940,36 @@ mod tests {
     }
 
     #[test]
+    fn scalar_cast_argument_is_accepted() {
+        for (size, align) in [(1, 1), (2, 2), (4, 4), (8, 8)] {
+            let abi = fn_abi(
+                vec![scalar_cast_abi_value(size, align)],
+                ignored_abi_value(),
+            );
+
+            validate_fn_abi("test_fn", &abi, 1, false).unwrap_or_else(|err| {
+                panic!("{size}-byte scalar Cast argument should validate, got `{err}`")
+            });
+        }
+    }
+
+    #[test]
     fn non_scalar_width_cast_return_is_rejected() {
         let abi = fn_abi(Vec::new(), scalar_cast_abi_value(3, 1));
         let err = validate_fn_abi("test_fn", &abi, 0, true)
             .expect_err("3-byte Cast return should be rejected");
+
+        assert!(
+            err.contains("unsupported Cast"),
+            "expected unsupported Cast diagnostic, got `{err}`"
+        );
+    }
+
+    #[test]
+    fn non_scalar_width_cast_argument_is_rejected() {
+        let abi = fn_abi(vec![scalar_cast_abi_value(3, 1)], ignored_abi_value());
+        let err = validate_fn_abi("test_fn", &abi, 1, false)
+            .expect_err("3-byte Cast argument should be rejected");
 
         assert!(
             err.contains("unsupported Cast"),

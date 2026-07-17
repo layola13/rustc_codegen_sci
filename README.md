@@ -32,7 +32,7 @@ object format, CPU/features, relocation model, and code model, plus
 monomorphized `TypeLayoutRecipe` records and rustc-derived `FnAbiPlan` metadata
 for function definitions and extern calls. The currently implemented ABI modes
 are Ignore/Direct plus narrow single-field signed and unsigned 8/16/32/64-bit
-Cast aggregate returns that map to one integer register; unsupported
+Cast aggregate arguments and returns that map to one integer register; unsupported
 Pair/Indirect and unsupported Cast cases are rejected before object publication.
 The backend also preflights rustc `FnAbiPlan` pass modes and rejects unsupported
 definitions before MIR lowering. Simple scalar raw-pointer load/store

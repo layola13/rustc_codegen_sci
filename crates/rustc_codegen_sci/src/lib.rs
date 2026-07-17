@@ -358,7 +358,7 @@ fn lower_function<'tcx>(
             }
         } else if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
             if local == rustc_middle::mir::RETURN_PLACE {
-                if !is_supported_cast_return_abi(&fn_abi.return_value)
+                if !is_supported_cast_abi_value(&fn_abi.return_value)
                     || field_types.len() != 1
                     || scalar_type_size_bytes(field_types[0]) != Some(fn_abi.return_value.size)
                 {
@@ -369,10 +369,16 @@ fn lower_function<'tcx>(
                 }
             }
             if local.index() != 0 && local.index() <= mir.arg_count {
-                return Err(BackendDiagnostic::new(format!(
-                    "{}: aggregate argument ABI is not yet supported",
-                    tcx.symbol_name(instance).name
-                )));
+                let argument = &fn_abi.arguments[local.index() - 1];
+                if !is_supported_cast_abi_value(argument)
+                    || field_types.len() != 1
+                    || scalar_type_size_bytes(field_types[0]) != Some(argument.size)
+                {
+                    return Err(BackendDiagnostic::new(format!(
+                        "{}: aggregate argument ABI is not yet supported",
+                        tcx.symbol_name(instance).name
+                    )));
+                }
             }
             for (field, ty) in field_types.into_iter().enumerate() {
                 let id = state.synthetic_tuple_field(local, field);
@@ -388,14 +394,24 @@ fn lower_function<'tcx>(
         }
     }
 
-    let argument_locals = (0..mir.arg_count)
-        .map(|index| rustc_middle::mir::Local::arg(index))
-        .filter(|local| {
-            let ty = monomorphize_ty(tcx, instance, mir.local_decls[*local].ty);
-            !is_unit_ty(ty)
-        })
-        .map(local_id)
-        .collect();
+    let mut argument_locals = Vec::with_capacity(mir.arg_count);
+    for index in 0..mir.arg_count {
+        let local = rustc_middle::mir::Local::arg(index);
+        let ty = monomorphize_ty(tcx, instance, mir.local_decls[local].ty);
+        if is_unit_ty(ty) {
+            continue;
+        }
+        if scalar_aggregate_field_types(tcx, ty).is_some() {
+            argument_locals.push(state.tuple_field(local, 0).ok_or_else(|| {
+                BackendDiagnostic::new(format!(
+                    "{}: aggregate argument field is missing a synthetic local",
+                    tcx.symbol_name(instance).name
+                ))
+            })?);
+        } else {
+            argument_locals.push(local_id(local));
+        }
+    }
     let return_ty = monomorphize_ty(
         tcx,
         instance,
@@ -498,6 +514,9 @@ fn validate_backend_fn_abi_boundary<'tcx>(
     let symbol = tcx.symbol_name(instance).name;
     let span = tcx.def_span(instance.def_id());
     for (index, argument) in abi.arguments.iter().enumerate() {
+        if is_supported_cast_abi_value(argument) {
+            continue;
+        }
         if let Some(mode) = unsupported_backend_pass_mode(&argument.mode) {
             return Err(BackendDiagnostic::with_span(
                 format!("{symbol}: ABI argument {index} uses unsupported {mode} pass mode"),
@@ -505,7 +524,7 @@ fn validate_backend_fn_abi_boundary<'tcx>(
             ));
         }
     }
-    if is_supported_cast_return_abi(&abi.return_value) {
+    if is_supported_cast_abi_value(&abi.return_value) {
         return Ok(());
     }
     if let Some(mode) = unsupported_backend_pass_mode(&abi.return_value.mode) {
@@ -517,7 +536,7 @@ fn validate_backend_fn_abi_boundary<'tcx>(
     Ok(())
 }
 
-fn is_supported_cast_return_abi(value: &AbiValuePlan) -> bool {
+fn is_supported_cast_abi_value(value: &AbiValuePlan) -> bool {
     let AbiPassModePlan::Cast {
         pad_i32,
         prefix,

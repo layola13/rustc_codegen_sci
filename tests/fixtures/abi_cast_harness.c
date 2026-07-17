@@ -40,6 +40,14 @@ extern struct OneI32 sci_abi_cast_return_i32(int32_t value);
 extern struct OneU32 sci_abi_cast_return_u32(uint32_t value);
 extern struct OneI64 sci_abi_cast_return_i64(int64_t value);
 extern struct OneU64 sci_abi_cast_return(uint64_t value);
+extern int8_t sci_abi_cast_arg_i8(struct OneI8 value);
+extern uint8_t sci_abi_cast_arg_u8(struct OneU8 value);
+extern int16_t sci_abi_cast_arg_i16(struct OneI16 value);
+extern uint16_t sci_abi_cast_arg_u16(struct OneU16 value);
+extern int32_t sci_abi_cast_arg_i32(struct OneI32 value);
+extern uint32_t sci_abi_cast_arg_u32(struct OneU32 value);
+extern int64_t sci_abi_cast_arg_i64(struct OneI64 value);
+extern uint64_t sci_abi_cast_arg_u64(struct OneU64 value);
 
 int main(void) {
     struct OneI8 result_i8 = sci_abi_cast_return_i8((int8_t)-42);
@@ -80,6 +88,31 @@ int main(void) {
     struct OneU64 result = sci_abi_cast_return(UINT64_C(0x1122334455667788));
     if (result.value != UINT64_C(0x1122334455667788)) {
         return 8;
+    }
+
+    if (sci_abi_cast_arg_i8((struct OneI8){ .value = (int8_t)-17 }) != (int8_t)-17) {
+        return 9;
+    }
+    if (sci_abi_cast_arg_u8((struct OneU8){ .value = UINT8_C(0xc7) }) != UINT8_C(0xc7)) {
+        return 10;
+    }
+    if (sci_abi_cast_arg_i16((struct OneI16){ .value = (int16_t)-123 }) != (int16_t)-123) {
+        return 11;
+    }
+    if (sci_abi_cast_arg_u16((struct OneU16){ .value = UINT16_C(0xcafe) }) != UINT16_C(0xcafe)) {
+        return 12;
+    }
+    if (sci_abi_cast_arg_i32((struct OneI32){ .value = INT32_C(-9876543) }) != INT32_C(-9876543)) {
+        return 13;
+    }
+    if (sci_abi_cast_arg_u32((struct OneU32){ .value = UINT32_C(0xcafe1234) }) != UINT32_C(0xcafe1234)) {
+        return 14;
+    }
+    if (sci_abi_cast_arg_i64((struct OneI64){ .value = -INT64_C(9876543210123) }) != -INT64_C(9876543210123)) {
+        return 15;
+    }
+    if (sci_abi_cast_arg_u64((struct OneU64){ .value = UINT64_C(0xfedcba9876543210) }) != UINT64_C(0xfedcba9876543210)) {
+        return 16;
     }
     return 0;
 }

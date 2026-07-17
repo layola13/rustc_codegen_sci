@@ -23,8 +23,8 @@ Baseline: 2026-07-16.
 - [x] Backend FnAbi preflight rejects unsupported Pair/Cast/Indirect pass modes
   with source spans before MIR lowering/object emission.
 - [x] First Cast ABI lowering: single-field signed and unsigned 8/16/32/64-bit
-  aggregate returns emitted as the cast scalar register with linked C smoke
-  coverage.
+  aggregate arguments/returns emitted as cast scalar registers with linked C
+  smoke coverage.
 - [x] Worker-level ABI/type-layout fixture matrix for the current serialized
   validation boundary.
 - [x] Linked Direct scalar ABI smoke fixture matrix covering C-to-SCI exports and
@@ -55,7 +55,7 @@ Baseline: 2026-07-16.
 - [x] Add backend compile-fail fixtures for real rustc Pair/Cast/Indirect
   pass-mode rejection.
 - [x] Add linked Cast ABI fixtures for single-field signed and unsigned
-  8/16/32/64-bit aggregate returns.
+  8/16/32/64-bit aggregate arguments/returns.
 - [x] Add initial linked bidirectional Direct scalar ABI fixtures.
 - [x] Count and execute 20+ linked Direct ABI fixture cases in the smoke gate.
 - [x] Add structured worker diagnostic codes to RPC responses.
