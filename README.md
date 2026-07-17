@@ -30,11 +30,12 @@ copies are supported. The canonical plan now carries a complete target
 descriptor for the current x86_64 Linux slice, including rustc DataLayout,
 object format, CPU/features, relocation model, and code model, plus
 monomorphized `TypeLayoutRecipe` records and rustc-derived `FnAbiPlan` metadata
-for function definitions and extern calls; the worker accepts only the currently
-implemented Ignore/Direct pass modes and rejects Pair/Cast/Indirect before
-object publication. The backend also preflights rustc `FnAbiPlan` pass modes and
-rejects unsupported Pair/Cast/Indirect definitions before MIR lowering. Simple
-scalar raw-pointer load/store dereference, scalar field projection through a raw
+for function definitions and extern calls. The currently implemented ABI modes
+are Ignore/Direct plus a narrow Cast aggregate return that maps to one integer
+register; unsupported Pair/Indirect and unsupported Cast cases are rejected
+before object publication. The backend also preflights rustc `FnAbiPlan` pass
+modes and rejects unsupported definitions before MIR lowering. Simple scalar
+raw-pointer load/store dereference, scalar field projection through a raw
 pointer, and fixed scalar array-index projection through a raw pointer are
 supported; dynamic indices, slices, and whole-aggregate memory operations are
 not supported yet.

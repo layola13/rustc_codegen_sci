@@ -66,9 +66,7 @@ compile_fail_fixture() {
 
 compile_fixture add
 compile_fixture abi_direct
-compile_fail_fixture abi_cast \
-    "rustc_codegen_sci backend rejected module [SCI_BACKEND_ABI_UNSUPPORTED]: sci_abi_cast_return: ABI return uses unsupported Cast pass mode" \
-    "tests/fixtures/abi_cast.rs:9:"
+compile_fixture abi_cast
 compile_fail_fixture abi_pair \
     "rustc_codegen_sci backend rejected module [SCI_BACKEND_ABI_UNSUPPORTED]: sci_abi_pair_return: ABI return uses unsupported Pair pass mode" \
     "tests/fixtures/abi_pair.rs:4:"

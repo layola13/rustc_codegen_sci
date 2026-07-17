@@ -358,10 +358,15 @@ fn lower_function<'tcx>(
             }
         } else if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
             if local == rustc_middle::mir::RETURN_PLACE {
-                return Err(BackendDiagnostic::new(format!(
-                    "{}: aggregate return ABI is not yet supported",
-                    tcx.symbol_name(instance).name
-                )));
+                if !is_supported_cast_return_abi(&fn_abi.return_value)
+                    || field_types.len() != 1
+                    || field_types[0] != cast_abi_scalar_type(&fn_abi.return_value)
+                {
+                    return Err(BackendDiagnostic::new(format!(
+                        "{}: aggregate return ABI is not yet supported",
+                        tcx.symbol_name(instance).name
+                    )));
+                }
             }
             if local.index() != 0 && local.index() <= mir.arg_count {
                 return Err(BackendDiagnostic::new(format!(
@@ -398,6 +403,17 @@ fn lower_function<'tcx>(
     );
     let return_local = if is_unit_ty(return_ty) {
         None
+    } else if scalar_aggregate_field_types(tcx, return_ty).is_some() {
+        Some(
+            state
+                .tuple_field(rustc_middle::mir::RETURN_PLACE, 0)
+                .ok_or_else(|| {
+                    BackendDiagnostic::new(format!(
+                        "{}: aggregate return field is missing a synthetic local",
+                        tcx.symbol_name(instance).name
+                    ))
+                })?,
+        )
     } else {
         Some(local_id(rustc_middle::mir::RETURN_PLACE))
     };
@@ -489,6 +505,9 @@ fn validate_backend_fn_abi_boundary<'tcx>(
             ));
         }
     }
+    if is_supported_cast_return_abi(&abi.return_value) {
+        return Ok(());
+    }
     if let Some(mode) = unsupported_backend_pass_mode(&abi.return_value.mode) {
         return Err(BackendDiagnostic::with_span(
             format!("{symbol}: ABI return uses unsupported {mode} pass mode"),
@@ -496,6 +515,35 @@ fn validate_backend_fn_abi_boundary<'tcx>(
         ));
     }
     Ok(())
+}
+
+fn is_supported_cast_return_abi(value: &AbiValuePlan) -> bool {
+    let AbiPassModePlan::Cast {
+        pad_i32,
+        prefix,
+        rest_offset,
+        rest,
+    } = &value.mode
+    else {
+        return false;
+    };
+    !*pad_i32
+        && prefix.is_empty()
+        && rest_offset.is_none()
+        && rest.unit.kind == AbiRegisterKind::Integer
+        && rest.total_bytes == value.size
+        && matches!(value.size, 1 | 2 | 4 | 8)
+        && value.align <= 8
+}
+
+fn cast_abi_scalar_type(value: &AbiValuePlan) -> ScalarType {
+    match value.size {
+        1 => ScalarType::U8,
+        2 => ScalarType::U16,
+        4 => ScalarType::U32,
+        8 => ScalarType::U64,
+        _ => unreachable!("unsupported cast ABI size must be checked first"),
+    }
 }
 
 fn unsupported_backend_pass_mode(mode: &AbiPassModePlan) -> Option<&'static str> {

@@ -40,8 +40,10 @@ Baseline: 2026-07-16.
   `SCI_BACKEND_*` codes.
 - `7efc32b`: backend-originated MIR statement/terminator lowering errors emit
   rustc source spans.
-- Current increment: backend FnAbi preflight rejects unsupported Pair/Cast/
-  Indirect pass modes before MIR lowering.
+- `b7f5308`: backend FnAbi preflight rejects unsupported Pair/Cast/Indirect pass
+  modes before MIR lowering.
+- Current increment: single-scalar Cast ABI returns lower through the scalar
+  return register.
 
 ## Current Increment
 
@@ -114,6 +116,17 @@ Baseline: 2026-07-16.
 - Added compile-fail smoke fixtures covering a real Cast C ABI return, a real
   Indirect C ABI return, and a real Pair Rust ABI return from the current
   rustc/x86_64 ABI classifier.
+- Added a narrow Cast ABI implementation for aggregate returns that are exactly
+  one scalar field and whose rustc Cast recipe is a single integer register no
+  larger than 8 bytes.
+- Reused the aggregate synthetic-field lowering for the return place so the
+  canonical plan returns the scalar field local while retaining the rustc
+  `FnAbiPlan` Cast evidence.
+- Updated worker ABI validation to accept only that scalar Cast return shape;
+  Cast arguments, Pair, and Indirect remain rejected.
+- Converted the former Cast compile-fail fixture into a linked C smoke fixture
+  that calls the SCI function returning `struct { uint64_t value; }` and verifies
+  the returned value.
 
 ## Current Boundary
 
@@ -124,8 +137,10 @@ load/store dereferences, scalar field projections after raw-pointer dereference,
 and fixed scalar array-index projections after raw-pointer dereference. It does
 not yet support dynamic array indices, slices, whole-aggregate memory copies,
 provenance-changing casts, nonzero pointer constants, allocations, relocations,
-or non-Direct ABI lowering. Unsupported Pair/Cast/Indirect pass modes are now
-rejected in backend FnAbi preflight before MIR lowering/object emission.
+or general non-Direct ABI lowering. The one implemented non-Direct ABI case is
+a single-scalar Cast aggregate return; unsupported Pair/Indirect and unsupported
+Cast cases are rejected in backend FnAbi preflight before MIR lowering/object
+emission.
 Worker tests now cover the current serialized ABI and layout validation
 boundary, and the smoke suite now has 33 linked Direct scalar ABI cases. The
 broader bidirectional C/LLVM ABI suite still needs non-Direct and aggregate

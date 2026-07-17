@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use sci_protocol::{
-    AbiPassModePlan, BasicBlockPlan, CallingConventionPlan, CompileRequest, CompileResponse,
-    DiagnosticLocation, Endian, ExternFunctionPlan, FieldLayoutRecipe, FnAbiPlan, FunctionPlan,
-    NicheRecipe, Operation, PLAN_VERSION, ScalarLayoutRecipe, ScalarType, SciModulePlan,
-    SwitchCasePlan, TagEncodingRecipe, TargetPlan, TerminatorPlan, TypeLayoutRecipe, ValueRef,
-    VariantRecipe, read_frame, write_frame,
+    AbiPassModePlan, AbiRegisterKind, AbiValuePlan, BasicBlockPlan, CallingConventionPlan,
+    CompileRequest, CompileResponse, DiagnosticLocation, Endian, ExternFunctionPlan,
+    FieldLayoutRecipe, FnAbiPlan, FunctionPlan, NicheRecipe, Operation, PLAN_VERSION,
+    ScalarLayoutRecipe, ScalarType, SciModulePlan, SwitchCasePlan, TagEncodingRecipe, TargetPlan,
+    TerminatorPlan, TypeLayoutRecipe, ValueRef, VariantRecipe, read_frame, write_frame,
 };
 
 const SUPPORTED_RUSTC_COMMIT: &str = "fcbe7917ba18120d9eda136f1c7c5a60c78e554e";
@@ -574,9 +574,9 @@ fn validate_fn_abi(
         ));
     }
     for (index, argument) in abi.arguments.iter().enumerate() {
-        validate_abi_value(context, &format!("argument {index}"), argument, true)?;
+        validate_abi_value(context, &format!("argument {index}"), argument, true, false)?;
     }
-    validate_abi_value(context, "return", &abi.return_value, has_return_value)?;
+    validate_abi_value(context, "return", &abi.return_value, has_return_value, true)?;
     Ok(())
 }
 
@@ -585,6 +585,7 @@ fn validate_abi_value(
     label: &str,
     value: &sci_protocol::AbiValuePlan,
     is_lowered: bool,
+    is_return: bool,
 ) -> Result<(), String> {
     validate_size_align(
         &format!("{context} ABI {label} layout"),
@@ -600,6 +601,11 @@ fn validate_abi_value(
         AbiPassModePlan::Pair => Err(format!(
             "{context} ABI {label} uses unsupported Pair pass mode"
         )),
+        AbiPassModePlan::Cast { .. }
+            if is_return && is_lowered && is_supported_cast_abi_value(value) =>
+        {
+            Ok(())
+        }
         AbiPassModePlan::Cast { .. } => Err(format!(
             "{context} ABI {label} uses unsupported Cast pass mode"
         )),
@@ -607,6 +613,25 @@ fn validate_abi_value(
             "{context} ABI {label} uses unsupported Indirect pass mode"
         )),
     }
+}
+
+fn is_supported_cast_abi_value(value: &AbiValuePlan) -> bool {
+    let AbiPassModePlan::Cast {
+        pad_i32,
+        prefix,
+        rest_offset,
+        rest,
+    } = &value.mode
+    else {
+        return false;
+    };
+    !*pad_i32
+        && prefix.is_empty()
+        && rest_offset.is_none()
+        && rest.unit.kind == AbiRegisterKind::Integer
+        && rest.total_bytes == value.size
+        && matches!(value.size, 1 | 2 | 4 | 8)
+        && value.align <= 8
 }
 
 fn validate_function(
@@ -1603,6 +1628,19 @@ mod tests {
         })
     }
 
+    fn scalar_cast_abi_value() -> AbiValuePlan {
+        abi_value(AbiPassModePlan::Cast {
+            pad_i32: false,
+            prefix: Vec::new(),
+            rest_offset: None,
+            rest: AbiUniformPlan {
+                unit: integer_register(64),
+                total_bytes: 8,
+                consecutive: true,
+            },
+        })
+    }
+
     fn indirect_abi_value() -> AbiValuePlan {
         abi_value(AbiPassModePlan::Indirect {
             has_metadata: false,
@@ -1889,6 +1927,13 @@ mod tests {
         );
 
         validate_fn_abi("test_fn", &abi, 1, false).expect("direct ABI should validate");
+    }
+
+    #[test]
+    fn scalar_cast_return_is_accepted() {
+        let abi = fn_abi(Vec::new(), scalar_cast_abi_value());
+
+        validate_fn_abi("test_fn", &abi, 0, true).expect("scalar Cast return should validate");
     }
 
     #[test]
