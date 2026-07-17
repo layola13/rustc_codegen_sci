@@ -53,6 +53,8 @@ Baseline: 2026-07-16.
   reuse keyed by canonical plan plus SCI identity.
 - [x] Narrow two-register aggregate argument ABI lowering for Pair/wide Cast
   shapes, with linked C-to-SCI and SCI-to-C smoke coverage.
+- [x] Narrow two-register Pair aggregate return lowering for SCI exports, with
+  linked C-to-SCI smoke coverage.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI

@@ -22,16 +22,18 @@ No LLVM backend fallback and no `bc2sa` fallback.
 2. Extend the first Cast ABI return lowering into broader Pair/Cast/Indirect C
    ABI fixtures and aggregate return/arg lowering against rustc `FnAbi`
    evidence; current smoke coverage supports bidirectional single-field signed
-   and unsigned 8/16/32/64-bit Cast C ABI arguments/returns plus two-register
-   aggregate arguments for Pair/wide Cast shapes, and rejects Indirect C ABI
-   plus Pair Rust ABI returns before object publication.
+   and unsigned 8/16/32/64-bit Cast C ABI arguments/returns, two-register
+   aggregate arguments for Pair/wide Cast shapes, and C-to-SCI two-register
+   Pair returns. Indirect C ABI and SCI-to-C two-register aggregate returns
+   remain hard errors or toolchain gaps before object publication.
 3. Add allocation images and relocations for statics, strings, and panic data.
 4. Add direct SAB no-fallback emission from the same canonical plan.
 
 Recently completed: narrow two-register aggregate arguments now lower through
 flattened scalar operands for Pair/wide Cast ABI shapes, with linked C-to-SCI
-and SCI-to-C smoke coverage; aggregate returns and sret/byval remain hard
-errors.
+and SCI-to-C smoke coverage. SCI-exported Pair aggregate returns now lower as
+two scalar return locals and link/run from C; SCI-to-C aggregate returns and
+sret/byval remain incomplete.
 
 ## Exit Gates
 

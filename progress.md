@@ -54,8 +54,9 @@ Baseline: 2026-07-16.
 - `33d5f26`: initial rust-trusted work-product manifests plus
   content-addressed object reuse keyed by canonical plan bytes, cache policy,
   and SCI identity.
-- Current increment: narrow two-register aggregate argument ABI lowering for
-  Pair and wide Cast shapes, with linked C-to-SCI and SCI-to-C smoke coverage.
+- Current increment: narrow two-register aggregate Pair returns now lower for
+  SCI exports, with linked C-to-SCI smoke coverage; SCI-to-C pair-return calls
+  still wait on SA multi-destination extern-call support.
 
 ## Current Increment
 
@@ -196,6 +197,17 @@ Baseline: 2026-07-16.
   fixture covering C-to-SCI Pair/wide-Cast aggregate arguments and SCI-to-C
   extern calls with the same shape; moved the Pair return rejection into
   `abi_pair_return`.
+- Added narrow Pair aggregate return lowering for SCI exports by returning both
+  synthetic scalar field locals from the canonical plan and SA function body.
+- Extended the linked `abi_pair` C harness to call a SCI-exported
+  `repr(C)` two-`u64` return and verify both fields across the C ABI boundary.
+- Removed the old `abi_pair_return` smoke rejection from the standard gate;
+  worker validation already accepts supported Pair/wide Cast returns as two
+  lowered values.
+- Confirmed SCI-to-C extern calls returning two scalars still fail in the
+  current SA verifier as an uninitialized second destination after
+  multi-destination `call`, so reverse-direction Pair returns remain outside
+  this increment.
 
 ## Current Boundary
 
@@ -224,8 +236,9 @@ through canonical `stack_alloc` slots instead of needing a separate memory model
 Scalar `extern "C"` function pointer calls now lower through canonical
 `CallIndirect` terminators with explicit scalar signatures; aggregate or
 non-C/variadic/unwinding function pointer calls remain hard errors.
-Two-register aggregate arguments are supported for Pair/wide Cast shapes, but
-aggregate returns, sret/byval, sysroot, Cargo productization, WASM, direct SAB,
-and strict proof remain incomplete. The work-product cache is a rust-trusted
-reuse gate and does not yet include a strict ownership proof sidecar or
-linked-image validator.
+Two-register aggregate arguments are supported for Pair/wide Cast shapes, and
+two-register Pair aggregate returns are supported for SCI exports. SCI-to-C
+extern calls returning two-register aggregates, sret/byval, sysroot, Cargo
+productization, WASM, direct SAB, and strict proof remain incomplete. The
+work-product cache is a rust-trusted reuse gate and does not yet include a
+strict ownership proof sidecar or linked-image validator.
