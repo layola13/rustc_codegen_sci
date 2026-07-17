@@ -51,6 +51,8 @@ Baseline: 2026-07-16.
   canonical signatures.
 - [x] Initial rust-trusted work-product manifest and content-addressed object
   reuse keyed by canonical plan plus SCI identity.
+- [x] Narrow two-register aggregate argument ABI lowering for Pair/wide Cast
+  shapes, with linked C-to-SCI and SCI-to-C smoke coverage.
 - [x] Standard test gate runs worker unit tests.
 
 ## M0 Protocol And ABI

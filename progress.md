@@ -51,9 +51,11 @@ Baseline: 2026-07-16.
 - `066f3ed`: `PLAN_VERSION = 12` scalar `extern "C"` function pointer
   indirect calls lower through canonical `CallIndirect` terminators carrying
   explicit scalar argument/return signatures.
-- Current increment: initial rust-trusted work-product manifests plus
+- `33d5f26`: initial rust-trusted work-product manifests plus
   content-addressed object reuse keyed by canonical plan bytes, cache policy,
   and SCI identity.
+- Current increment: narrow two-register aggregate argument ABI lowering for
+  Pair and wide Cast shapes, with linked C-to-SCI and SCI-to-C smoke coverage.
 
 ## Current Increment
 
@@ -183,6 +185,17 @@ Baseline: 2026-07-16.
   path; the output manifest records `cache_hit: true`.
 - Added worker unit coverage for cached object/manifest publication, and smoke
   evidence that a second run with the same cache emits cache-hit manifests.
+- Added narrow aggregate argument lowering for two-scalar 16-byte ABI values
+  passed as either Pair or wide Cast register pairs; backend argument locals and
+  call operands now flatten all supported aggregate fields instead of only field
+  zero.
+- Extended worker ABI validation so supported Pair and wide Cast arguments
+  consume two lowered scalar values, while Pair/wide Cast returns remain
+  rejected.
+- Converted `abi_pair` from a pure compile-fail fixture into a linked C smoke
+  fixture covering C-to-SCI Pair/wide-Cast aggregate arguments and SCI-to-C
+  extern calls with the same shape; moved the Pair return rejection into
+  `abi_pair_return`.
 
 ## Current Boundary
 
@@ -210,7 +223,9 @@ statement/terminator lowering failures. Stack-backed scalar locals now lower
 through canonical `stack_alloc` slots instead of needing a separate memory model.
 Scalar `extern "C"` function pointer calls now lower through canonical
 `CallIndirect` terminators with explicit scalar signatures; aggregate or
-non-C/variadic/unwinding function pointer calls remain hard errors. Aggregate
-ABI, sysroot, Cargo productization, WASM, direct SAB, and strict proof remain
-incomplete. The work-product cache is a rust-trusted reuse gate and does not yet
-include a strict ownership proof sidecar or linked-image validator.
+non-C/variadic/unwinding function pointer calls remain hard errors.
+Two-register aggregate arguments are supported for Pair/wide Cast shapes, but
+aggregate returns, sret/byval, sysroot, Cargo productization, WASM, direct SAB,
+and strict proof remain incomplete. The work-product cache is a rust-trusted
+reuse gate and does not yet include a strict ownership proof sidecar or
+linked-image validator.

@@ -861,13 +861,6 @@ fn validate_fn_abi(
     if abi.can_unwind {
         return Err(format!("{context} uses unsupported unwinding ABI"));
     }
-    if abi.arguments.len() != lowered_argument_count {
-        return Err(format!(
-            "{context} ABI has {} arguments but plan lowered {}",
-            abi.arguments.len(),
-            lowered_argument_count
-        ));
-    }
     if abi.fixed_count
         != u32::try_from(abi.arguments.len()).map_err(|_| format!("{context} has too many args"))?
     {
@@ -875,11 +868,37 @@ fn validate_fn_abi(
             "{context} ABI fixed_count does not match arguments"
         ));
     }
+    let mut expected_lowered_argument_count = 0_usize;
     for (index, argument) in abi.arguments.iter().enumerate() {
-        validate_abi_value(context, &format!("argument {index}"), argument, true)?;
+        validate_abi_value(context, &format!("argument {index}"), argument, true, true)?;
+        expected_lowered_argument_count += lowered_abi_value_count(argument).ok_or_else(|| {
+            format!("{context} ABI argument {index} uses unsupported lowered shape")
+        })?;
     }
-    validate_abi_value(context, "return", &abi.return_value, has_return_value)?;
+    if expected_lowered_argument_count != lowered_argument_count {
+        return Err(format!(
+            "{context} ABI expects {expected_lowered_argument_count} lowered arguments but plan lowered {lowered_argument_count}",
+        ));
+    }
+    validate_abi_value(
+        context,
+        "return",
+        &abi.return_value,
+        has_return_value,
+        false,
+    )?;
     Ok(())
+}
+
+fn lowered_abi_value_count(value: &AbiValuePlan) -> Option<usize> {
+    match value.mode {
+        AbiPassModePlan::Ignore => Some(0),
+        AbiPassModePlan::Direct => Some(1),
+        AbiPassModePlan::Cast { .. } if is_supported_cast_abi_value(value) => Some(1),
+        AbiPassModePlan::Cast { .. } if is_supported_wide_cast_abi_value(value) => Some(2),
+        AbiPassModePlan::Pair if is_supported_pair_abi_value(value) => Some(2),
+        _ => None,
+    }
 }
 
 fn validate_abi_value(
@@ -887,6 +906,7 @@ fn validate_abi_value(
     label: &str,
     value: &sci_protocol::AbiValuePlan,
     is_lowered: bool,
+    allow_pair: bool,
 ) -> Result<(), String> {
     validate_size_align(
         &format!("{context} ABI {label} layout"),
@@ -899,10 +919,19 @@ fn validate_abi_value(
         AbiPassModePlan::Ignore | AbiPassModePlan::Direct => Err(format!(
             "{context} ABI {label} mode does not match lowered value presence"
         )),
+        AbiPassModePlan::Pair if allow_pair && is_lowered && is_supported_pair_abi_value(value) => {
+            Ok(())
+        }
         AbiPassModePlan::Pair => Err(format!(
             "{context} ABI {label} uses unsupported Pair pass mode"
         )),
-        AbiPassModePlan::Cast { .. } if is_lowered && is_supported_cast_abi_value(value) => Ok(()),
+        AbiPassModePlan::Cast { .. }
+            if is_lowered
+                && (is_supported_cast_abi_value(value)
+                    || allow_pair && is_supported_wide_cast_abi_value(value)) =>
+        {
+            Ok(())
+        }
         AbiPassModePlan::Cast { .. } => Err(format!(
             "{context} ABI {label} uses unsupported Cast pass mode"
         )),
@@ -928,6 +957,36 @@ fn is_supported_cast_abi_value(value: &AbiValuePlan) -> bool {
         && rest.unit.kind == AbiRegisterKind::Integer
         && rest.total_bytes == value.size
         && matches!(value.size, 1 | 2 | 4 | 8)
+        && value.align <= 8
+}
+
+fn is_supported_pair_abi_value(value: &AbiValuePlan) -> bool {
+    matches!(value.mode, AbiPassModePlan::Pair) && value.size == 16 && value.align <= 8
+}
+
+fn is_supported_wide_cast_abi_value(value: &AbiValuePlan) -> bool {
+    let AbiPassModePlan::Cast {
+        pad_i32,
+        prefix,
+        rest_offset,
+        rest,
+    } = &value.mode
+    else {
+        return false;
+    };
+    let prefix_bytes = prefix
+        .iter()
+        .try_fold(0_u64, |sum, register| {
+            (register.kind == AbiRegisterKind::Integer)
+                .then_some(sum + register.bits.checked_div(8)?)
+        })
+        .unwrap_or(u64::MAX);
+    !pad_i32
+        && prefix.len() == 1
+        && rest_offset.is_none()
+        && rest.unit.kind == AbiRegisterKind::Integer
+        && prefix_bytes + rest.total_bytes == value.size
+        && value.size == 16
         && value.align <= 8
 }
 
@@ -2078,6 +2137,23 @@ mod tests {
         })
     }
 
+    fn wide_cast_abi_value() -> AbiValuePlan {
+        abi_value_with(
+            16,
+            8,
+            AbiPassModePlan::Cast {
+                pad_i32: false,
+                prefix: vec![integer_register(64)],
+                rest_offset: None,
+                rest: AbiUniformPlan {
+                    unit: integer_register(64),
+                    total_bytes: 8,
+                    consecutive: false,
+                },
+            },
+        )
+    }
+
     fn scalar_cast_abi_value(size: u64, align: u64) -> AbiValuePlan {
         abi_value_with(
             size,
@@ -2100,6 +2176,10 @@ mod tests {
             has_metadata: false,
             on_stack: true,
         })
+    }
+
+    fn pair_abi_value() -> AbiValuePlan {
+        abi_value_with(16, 8, AbiPassModePlan::Pair)
     }
 
     fn fn_abi(arguments: Vec<AbiValuePlan>, return_value: AbiValuePlan) -> FnAbiPlan {
@@ -2707,14 +2787,14 @@ mod tests {
             ),
             (
                 "pair_argument",
-                fn_abi(vec![abi_value(AbiPassModePlan::Pair)], ignored_abi_value()),
-                1,
+                fn_abi(vec![pair_abi_value()], ignored_abi_value()),
+                2,
                 false,
-                Some("unsupported Pair"),
+                None,
             ),
             (
                 "pair_return",
-                fn_abi(Vec::new(), abi_value(AbiPassModePlan::Pair)),
+                fn_abi(Vec::new(), pair_abi_value()),
                 0,
                 true,
                 Some("unsupported Pair"),
@@ -2725,6 +2805,13 @@ mod tests {
                 1,
                 false,
                 Some("unsupported Cast"),
+            ),
+            (
+                "wide_cast_argument",
+                fn_abi(vec![wide_cast_abi_value()], ignored_abi_value()),
+                2,
+                false,
+                None,
             ),
             (
                 "cast_return",
@@ -2961,11 +3048,27 @@ mod tests {
     }
 
     #[test]
-    fn pair_argument_is_rejected_before_emission() {
+    fn pair_argument_is_accepted_as_two_lowered_values() {
+        let abi = fn_abi(vec![pair_abi_value()], abi_value(AbiPassModePlan::Ignore));
+
+        validate_fn_abi("test_fn", &abi, 2, false)
+            .expect("pair argument ABI should validate as two lowered values");
+    }
+
+    #[test]
+    fn wide_cast_argument_is_accepted_as_two_lowered_values() {
         let abi = fn_abi(
-            vec![abi_value(AbiPassModePlan::Pair)],
+            vec![wide_cast_abi_value()],
             abi_value(AbiPassModePlan::Ignore),
         );
+
+        validate_fn_abi("test_fn", &abi, 2, false)
+            .expect("wide Cast argument ABI should validate as two lowered values");
+    }
+
+    #[test]
+    fn pair_return_is_rejected_before_emission() {
+        let abi = fn_abi(Vec::new(), pair_abi_value());
 
         assert_abi_error_contains(abi, "unsupported Pair pass mode");
     }

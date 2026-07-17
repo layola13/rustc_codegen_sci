@@ -24,6 +24,9 @@ Baseline date: 2026-07-16.
 - Narrow bidirectional Cast ABI argument/return lowering for single-field signed
   and unsigned 8/16/32/64-bit aggregates passed in one integer register, with
   linked C smoke coverage.
+- Narrow two-register aggregate argument ABI lowering for Pair/wide Cast shapes,
+  with linked C-to-SCI and SCI-to-C smoke coverage; aggregate returns and
+  sret/byval remain rejected.
 - Versioned framed worker RPC with bounded frame sizes.
 - Backend-originated lowering diagnostics annotated with MIR block and
   statement/terminator context.
@@ -66,7 +69,7 @@ Baseline date: 2026-07-16.
 | Target | `x86_64-unknown-linux-gnu` with explicit ELF object format, rustc DataLayout, `x86-64` CPU, empty target features, PIC relocation model, and default code model |
 | Panic | `abort` |
 | Crates | `rlib`, object emission |
-| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted; single-field signed and unsigned 8/16/32/64-bit Cast aggregate arguments/returns are lowered through scalar registers; scalar `extern "C"` function pointer indirect calls carry explicit canonical signatures and lower to `call_indirect`; Pair/Indirect and unsupported Cast cases are serialized but rejected until implemented; backend preflight rejects unsupported non-Direct definitions before MIR lowering; simple scalar raw-pointer deref/load/store, scalar field projection, and fixed scalar array-index projection are supported |
+| Function ABI | scalar integer, raw pointer, and void C/Rust ABI with rustc-derived `FnAbiPlan`; Ignore/Direct pass modes are accepted; single-field signed and unsigned 8/16/32/64-bit Cast aggregate arguments/returns are lowered through scalar registers; two-register aggregate arguments for Pair/wide Cast shapes are flattened to scalar operands; scalar `extern "C"` function pointer indirect calls carry explicit canonical signatures and lower to `call_indirect`; aggregate returns, Indirect, and unsupported Cast cases are serialized but rejected until implemented; backend preflight rejects unsupported non-Direct definitions before MIR lowering; simple scalar raw-pointer deref/load/store, scalar field projection, and fixed scalar array-index projection are supported |
 | Type Layout | monomorphized rustc `LayoutData` recipes for local and extern signature types, including size/alignment, fields, variants, niches, and scalar valid ranges |
 | MIR CFG | multiple blocks with `return`, `goto`, bool `SwitchInt`/`br`, signed/unsigned scalar integer `SwitchInt` compare-chain emission, and `Assert` abort paths |
 | MIR calls | direct module-local scalar/raw-pointer/void function calls, direct scalar/raw-pointer/void `extern "C"` calls, narrow Cast aggregate `extern "C"` calls, and scalar `extern "C"` function pointer indirect calls, with unreachable unwind |

@@ -385,10 +385,7 @@ fn lower_function<'tcx>(
             }
             if local.index() != 0 && local.index() <= mir.arg_count {
                 let argument = &fn_abi.arguments[local.index() - 1];
-                if !is_supported_cast_abi_value(argument)
-                    || field_types.len() != 1
-                    || scalar_type_size_bytes(field_types[0]) != Some(argument.size)
-                {
+                if !is_supported_aggregate_argument_abi(&field_types, argument) {
                     return Err(BackendDiagnostic::with_location(
                         format!(
                             "{}: aggregate argument ABI is not yet supported",
@@ -432,21 +429,23 @@ fn lower_function<'tcx>(
         if is_unit_ty(ty) {
             continue;
         }
-        if scalar_aggregate_field_types(tcx, ty).is_some() {
-            argument_locals.push(state.tuple_field(local, 0).ok_or_else(|| {
-                BackendDiagnostic::with_location(
-                    format!(
-                        "{}: aggregate argument field is missing a synthetic local",
-                        tcx.symbol_name(instance).name
-                    ),
-                    Some(DiagnosticLocation {
-                        function: Some(tcx.symbol_name(instance).name.to_string()),
-                        block: None,
-                        local: Some(local.index() as u32),
-                    }),
-                    None,
-                )
-            })?);
+        if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
+            for field in 0..field_types.len() {
+                argument_locals.push(state.tuple_field(local, field).ok_or_else(|| {
+                    BackendDiagnostic::with_location(
+                        format!(
+                            "{}: aggregate argument field {field} is missing a synthetic local",
+                            tcx.symbol_name(instance).name
+                        ),
+                        Some(DiagnosticLocation {
+                            function: Some(tcx.symbol_name(instance).name.to_string()),
+                            block: None,
+                            local: Some(local.index() as u32),
+                        }),
+                        None,
+                    )
+                })?);
+            }
         } else {
             argument_locals.push(local_id(local));
         }
@@ -573,7 +572,10 @@ fn validate_backend_fn_abi_boundary<'tcx>(
     let symbol = tcx.symbol_name(instance).name;
     let span = tcx.def_span(instance.def_id());
     for (index, argument) in abi.arguments.iter().enumerate() {
-        if is_supported_cast_abi_value(argument) {
+        if is_supported_cast_abi_value(argument)
+            || is_supported_wide_cast_abi_argument_value(argument)
+            || matches!(argument.mode, AbiPassModePlan::Pair)
+        {
             continue;
         }
         if let Some(mode) = unsupported_backend_pass_mode(&argument.mode) {
@@ -622,6 +624,64 @@ fn is_supported_cast_abi_value(value: &AbiValuePlan) -> bool {
         && rest.total_bytes == value.size
         && matches!(value.size, 1 | 2 | 4 | 8)
         && value.align <= 8
+}
+
+fn is_supported_pair_abi_argument(field_types: &[ScalarType], value: &AbiValuePlan) -> bool {
+    matches!(value.mode, AbiPassModePlan::Pair)
+        && field_types.len() == 2
+        && value.align <= 8
+        && field_types
+            .iter()
+            .copied()
+            .map(scalar_type_size_bytes)
+            .try_fold(0_u64, |sum, size| Some(sum + size?))
+            == Some(value.size)
+}
+
+fn is_supported_wide_cast_abi_argument_value(value: &AbiValuePlan) -> bool {
+    let AbiPassModePlan::Cast {
+        pad_i32,
+        prefix,
+        rest_offset,
+        rest,
+    } = &value.mode
+    else {
+        return false;
+    };
+    let prefix_bytes = prefix
+        .iter()
+        .try_fold(0_u64, |sum, register| {
+            (register.kind == AbiRegisterKind::Integer)
+                .then_some(sum + register.bits.checked_div(8)?)
+        })
+        .unwrap_or(u64::MAX);
+    !*pad_i32
+        && prefix.len() == 1
+        && rest_offset.is_none()
+        && rest.unit.kind == AbiRegisterKind::Integer
+        && prefix_bytes + rest.total_bytes == value.size
+        && value.size == 16
+        && value.align <= 8
+}
+
+fn is_supported_wide_cast_abi_argument(field_types: &[ScalarType], value: &AbiValuePlan) -> bool {
+    is_supported_wide_cast_abi_argument_value(value)
+        && field_types.len() == 2
+        && field_types
+            .iter()
+            .copied()
+            .map(scalar_type_size_bytes)
+            .try_fold(0_u64, |sum, size| Some(sum + size?))
+            == Some(value.size)
+}
+
+fn is_supported_aggregate_argument_abi(field_types: &[ScalarType], value: &AbiValuePlan) -> bool {
+    if is_supported_cast_abi_value(value) {
+        return field_types.len() == 1
+            && scalar_type_size_bytes(field_types[0]) == Some(value.size);
+    }
+    is_supported_pair_abi_argument(field_types, value)
+        || is_supported_wide_cast_abi_argument(field_types, value)
 }
 
 fn unsupported_backend_pass_mode(mode: &AbiPassModePlan) -> Option<&'static str> {
@@ -896,8 +956,11 @@ fn lower_terminator<'tcx>(
             })?;
             let args = args
                 .iter()
-                .map(|arg| lower_call_argument(tcx, instance, mir, state, &arg.node))
-                .collect::<Result<Vec<_>, _>>()?;
+                .map(|arg| lower_call_arguments(tcx, instance, mir, state, &arg.node))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
             let lowered_arg_count = args.len();
             if func.const_fn_def().is_some() {
                 let callee = lower_direct_callee(tcx, instance, func)?;
@@ -1023,13 +1086,6 @@ fn lower_extern_function<'tcx>(
     }
     let signature_inputs = sig.inputs().skip_binder();
     let signature_input_count = signature_inputs.len();
-    if lowered_arg_count != signature_input_count {
-        return Err(format!(
-            "{}: extern callee `{}` lowered with {lowered_arg_count} args, expected {signature_input_count}",
-            tcx.symbol_name(caller).name,
-            tcx.def_path_str(callee.def_id())
-        ));
-    }
 
     let fn_abi = lower_fn_abi_plan(tcx, callee)?;
     let mut argument_types = Vec::with_capacity(signature_input_count);
@@ -1048,18 +1104,27 @@ fn lower_extern_function<'tcx>(
                 )
             })?;
             let abi_argument = &fn_abi.arguments[index];
-            if !is_supported_cast_abi_value(abi_argument)
-                || field_types.len() != 1
-                || scalar_type_size_bytes(field_types[0]) != Some(abi_argument.size)
-            {
+            if !is_supported_aggregate_argument_abi(&field_types, abi_argument) {
                 return Err(format!(
-                    "{}: extern callee `{}` aggregate argument ABI is not yet supported",
+                    "{}: extern callee `{}` aggregate argument ABI is not yet supported: mode {:?}, size {}, align {}, fields {:?}",
                     tcx.symbol_name(caller).name,
-                    tcx.def_path_str(callee.def_id())
+                    tcx.def_path_str(callee.def_id()),
+                    abi_argument.mode,
+                    abi_argument.size,
+                    abi_argument.align,
+                    field_types
                 ));
             }
-            argument_types.push(field_types[0]);
+            argument_types.extend(field_types);
         }
+    }
+    if lowered_arg_count != argument_types.len() {
+        return Err(format!(
+            "{}: extern callee `{}` lowered with {lowered_arg_count} args, expected {}",
+            tcx.symbol_name(caller).name,
+            tcx.def_path_str(callee.def_id()),
+            argument_types.len()
+        ));
     }
 
     let sig_return_ty = monomorphize_ty(tcx, caller, sig.output().skip_binder());
@@ -2624,15 +2689,15 @@ fn lower_operand<'tcx>(
     })
 }
 
-fn lower_call_argument<'tcx>(
+fn lower_call_arguments<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
     mir: &Body<'tcx>,
     state: &LoweringState,
     operand: &Operand<'tcx>,
-) -> Result<ValueRef, String> {
+) -> Result<Vec<ValueRef>, String> {
     let ty = monomorphize_ty(tcx, instance, operand.ty(&mir.local_decls, tcx));
-    if scalar_aggregate_field_types(tcx, ty).is_some() {
+    if let Some(field_types) = scalar_aggregate_field_types(tcx, ty) {
         let place = match operand {
             Operand::Copy(place) | Operand::Move(place) => *place,
             _ => {
@@ -2648,15 +2713,21 @@ fn lower_call_argument<'tcx>(
                 tcx.symbol_name(instance).name
             ));
         }
-        let local = state.tuple_field(place.local, 0).ok_or_else(|| {
-            format!(
-                "{}: aggregate call argument field is missing a synthetic local",
-                tcx.symbol_name(instance).name
-            )
-        })?;
-        return Ok(ValueRef::Local(local));
+        return field_types
+            .iter()
+            .enumerate()
+            .map(|(field, _)| {
+                let local = state.tuple_field(place.local, field).ok_or_else(|| {
+                    format!(
+                        "{}: aggregate call argument field {field} is missing a synthetic local",
+                        tcx.symbol_name(instance).name
+                    )
+                })?;
+                Ok(ValueRef::Local(local))
+            })
+            .collect();
     }
-    lower_operand(tcx, instance, mir, state, operand)
+    lower_operand(tcx, instance, mir, state, operand).map(|value| vec![value])
 }
 
 fn lower_constant<'tcx>(

@@ -22,15 +22,16 @@ No LLVM backend fallback and no `bc2sa` fallback.
 2. Extend the first Cast ABI return lowering into broader Pair/Cast/Indirect C
    ABI fixtures and aggregate return/arg lowering against rustc `FnAbi`
    evidence; current smoke coverage supports bidirectional single-field signed
-   and unsigned 8/16/32/64-bit Cast C ABI arguments/returns and rejects Indirect
-   C ABI plus Pair Rust ABI returns before MIR lowering.
+   and unsigned 8/16/32/64-bit Cast C ABI arguments/returns plus two-register
+   aggregate arguments for Pair/wide Cast shapes, and rejects Indirect C ABI
+   plus Pair Rust ABI returns before object publication.
 3. Add allocation images and relocations for statics, strings, and panic data.
 4. Add direct SAB no-fallback emission from the same canonical plan.
 
-Recently completed: the worker now writes rust-trusted work-product manifests
-recording plan/object hashes, target, cache policy, and SCI identity, and it
-reuses content-addressed cached objects after manifest and object-hash
-validation.
+Recently completed: narrow two-register aggregate arguments now lower through
+flattened scalar operands for Pair/wide Cast ABI shapes, with linked C-to-SCI
+and SCI-to-C smoke coverage; aggregate returns and sret/byval remain hard
+errors.
 
 ## Exit Gates
 
